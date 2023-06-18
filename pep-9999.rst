@@ -1,0 +1,556 @@
+PEP: 9999
+Title: The FrankenPEP for Venice and BoC
+Author: Matthew Johnsson, Matthew Parkinsson, Sylvan Clebsch, Tobias Wrigstad
+Status: Draft
+Type: Standards Track
+Content-Type: text/x-rst
+Created: 16-Jun-2023
+Python-Verson: TBD
+
+
+Abstract
+========
+
+The PEP proposes an extension to Python with "Behaviour-oriented
+Concurrency", a new concurrency model that is safe (in the sense
+of no data races) and does not require a GIL.
+
+The PEP extends Python with four new concepts: *behaviours*, *cowns*,
+*regions* and *region objects*.
+
+A program's heap is partitioned into isolated regions. Each region
+is reified as a region object that allows explicit region
+manipulation. Region objects can be wrapped in cowns which allows
+them to be shared between "threads", but enforces dynamically that
+the contents of a cown is visible to at most one "thread" of
+control at a time. Finally, a behaviour is a task that operates on
+zero or more acquired cowns.
+
+The isolation of regions ensure that accesses to objects are never
+contended.
+
+
+Proposal
+========
+
+Summary:
+
+* Add the new concepts `behaviour`_ and `cown`_
+* Add the new concepts `region`_ and `region object`_
+* Add a new runtime component for scheduling and running behaviours
+* Add new dynamic checking to enforce isolation
+
+The following description first discusses the rationale for
+adopting a new concurrency model in Python. The rest of the
+description then takes a bottom-up approach. It starts by defining
+regions and their reification in Python as region objects, and
+operations on region objects. It then defines behaviours and their
+reification in Python in form of the ``when`` language construct.
+
+
+Rationale
+---------
+
+Behaviour-oriented Concurrency (BoC for short) is a concurrency
+model where programs are comprised of tasks that operate on data.
+We call such tasks *behaviours* and partition all mutable data in
+a program into isolated *regions*. Each region has a single entry
+point that we call a *region object*. That regions are isolated
+means that the intersection of any two regions is empty: no
+mutable object is reachable from more than one region (with the
+exception of region objects).
+
+Unlike e.g. a finish/async model, behaviours do not join at a
+particular program point. Such a model encourages a fork/join
+style way of building programs, which have a hard time saturating
+multicore machines due to Amdahl's law. In BoC, programs
+"continue" by behaviours spawning more behaviours, and
+coordination happens when behaviours operate on the same regions.
+
+Spawning a behaviour can be likened with an asynchronous method
+call to a method that has no return value, and whose arguments are
+zero or more cowns each wrapping one region object.
+
+In order to transition from spawned to running, a behaviour needs
+to *acquire* all its cowns. (If the behaviour has no parameter, 
+it can transition to running immediately.) Acquiring a cown can 
+be likened to acquiring a specific lock for the region wrapped 
+in the cown. The implementation guarantees that multiple
+spawned behaviours whose parameters include the same cowns
+will not deadlock, and that only one of the behaviours
+will be able to run at a time.
+
+Thus, when a behaviour starts running, it has exclusive access to
+all mutable state that it can reach. Therefore, it cannot race
+with concurrent behaviours.
+
+When a behaviour finishes, it releases all cowns so that
+they can be acquired by other scheduled behaviours.
+
+One of the key advantages of BoC is that it allows happens-before
+relations between behaviours to be expressed easily in a readable
+way by tying it to program order and how cowns are
+chained across behaviours. See `Examples`_.
+
+
+Regions and Region Objects
+--------------------------
+
+A region is a set of mutable objects that are isolated from the
+mutable objects in the rest of the program. Isolation means that
+an object in a region can only be referenced by objects in the
+same region. Every region has a unique *region object* that serves
+as the entry point into a region. In addition to references from
+the region itself, the region object can have a single incoming
+reference from another region.
+
+Let ``region(o)`` be a function that returns the region object for
+the region to which ``o`` belongs and ``is_region_obj(r)`` be a
+function that returns ``True`` if ``r`` is a region object.
+Assuming that all objects are mutable or region objects, the
+following function returns ``True``::
+  
+   def example(o):
+     r1 = region(o)
+     r2 = region(o.f)     # Assume o.f is defined and not None
+     return r1 == r2 or is_region_obj(r2)
+
+
+Region Isolation
+~~~~~~~~~~~~~~~~
+
+Region isolation is enforced by runtime checking. A write to a field
+will raise an exception if the object stored in the field belongs to
+another region. When called with objects belonging to different
+regions, the following function returns ``True``::
+  
+   def example(o1, o2):
+     assert region(o1) != region(o2)
+     try:
+       o1.f = o2
+     except RegionIsolationError:
+       return True
+     return False
+
+
+Region Creation
+~~~~~~~~~~~~~~~
+
+Regions are created by creating a region object::
+  
+  r = Region("optional name")
+
+This creates a new region which is empty except for the region
+object itself. The optional name is used in messages in exceptions
+for debugging purposes.
+
+A region has a field ``root`` which points to a single object in
+the region. This field is initialised to ``None``.
+
+  **TODO** Do we allow other fields to be created in a region obj?
+
+
+Opening and Closing Regions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Regions have two states: *open* and *closed*. Regions are closed
+upon creation. When a region is closed, its objects (and `nested
+regions`_) are not accessible to the program::
+  
+  x = r.root         # raises RegionIsolationError
+  r.root = object()  # -''-
+
+Regions are opened using the standard ``with`` construct::
+  
+  r = Region("my region")
+  # r is now closed
+  with r:
+    # r is now open
+    x = r.root         # OK, read r's root into stack variable x
+    r.root = object()  # OK, store new object in r's root
+  # r is now closed again
+
+  **TODO** How should we guard against the following situation?
+
+  ::
+
+    r1 = Region("r1")
+    x = None
+    with r1:
+      r1.root = [42]
+      x = r1.root
+    print(x[0])  # Accesses object inside closed region
+
+The Current Region
+~~~~~~~~~~~~~~~~~~
+
+We refer to the most recently opened region as the *current*
+region. All allocations take place in the current region. The
+following code creates two regions, ``r1`` and ``r2`` and
+creates one object in each region::
+  
+  r1 = Region("r1")
+  r2 = Region("r2")
+  with r1:
+    o1 = object()   # Created in r1
+  with r2:
+    o2 = object()   # Created in r2
+
+The following code snippet is equivalent to the one above::
+  
+  r1 = Region("r1")
+  r2 = Region("r2")
+  with r1:
+    o1 = object()    # Created in r1
+    with r2:
+      o2 = object()  # Created in r2
+
+The difference between the two last examples is that in the
+second, ``r1`` and ``r2`` are both open simultaneously on
+the line where ``o2`` is created. 
+
+A region can be opened multiple times, so the following code
+is legal::
+
+  with r1:
+    with r2:
+      with r1:
+        r1.root = object()
+
+(Note: there is no need to open a region multiple times but allowing
+it makes code more compositional.)
+
+.. _nested regions:
+.. _nested:
+
+Nesting Regions
+~~~~~~~~~~~~~~~
+
+Regions can be nested -- this happens automatically when an
+object in a region stores a region object. The following code
+creates a region with a list object whose elements are all
+region objects::
+
+  r1 = Region("r1")
+  with r1:
+    r1.root = [Region("r%d") % i for i in range(2,5)]
+
+If region ``r1`` is nested inside region ``r2``, we say that
+``r2`` is the (direct) parent or ``r1``. A region that is not
+nested inside another is called *independent*. All regions are
+created as independent.
+
+Only an independent region may be nested inside another region. An
+attempt at nesting a region twice inside the same region or inside
+multiple regions will raise a ``NestingException``::
+
+  r1 = Region("r1")
+  r2 = Region("r2")
+  r3 = Region("r3")
+  with r1:
+    r1.root = [r3]       # OK, nests r3 in r1
+  with r2:
+    r2.root = r3         # raises NestingException
+  with r1:
+    append(r1.root, r3)  # raises NestingException
+
+Changing the nesting topology is possible by first detaching the
+region before the second nesting. Detaching a region makes it
+independent::
+  
+  ...
+  with r1:
+    r1.root = None   # detaches r3 from r1, r3 becomes independent
+  with r2:
+    r2.root = r3     # OK
+
+Python's swap semantics is supported::
+
+  ...
+  with r1:
+    with r2:
+      r1.root, r2.root = r2.root, r1.root
+
+Opening a nested region is only permitted if its parent region is open.
+Thus, the following code leads to a ``NestingException``::
+
+  r1 = Region("r1")
+  r2 = Region("r2")
+  with r1:
+    r1.root = r2  # Nest r2 directly inside r1
+  with r2:        # raises a NestingException sinde r1 is closed
+    ...           # unreachable code
+      
+    
+Merging Regions
+~~~~~~~~~~~~~~~
+
+A closed region can be *merged* into an open region::
+  
+  # r1 is an open region, r2 is closed
+  x = r2.merge(r1)
+
+The code above *moves* all objects in ``r2`` into ``r1``. The
+variable ``x`` holds the contents of ``r2.roots``.
+
+After merging, the ``r2`` region still exists but is empty --
+``root`` is ``None`` etc.
+
+Merging a region is *shallow*, meaning that nested regions are
+unaffected.
+
+Merging from an open region or into a closed region raises a
+``MergeException``.
+
+
+Freezing Regions
+~~~~~~~~~~~~~~~~
+
+A region's entire contents can be turned `immutable`_ by
+*freezing* it::
+
+  x = r2.freeze()
+
+Freezing a region is *deep*, meaning that nested regions are also
+frozen. Freezing removes all frozen region objects from the
+frozen object graph. Consider the following code::
+
+  r2 = Region("r2")
+  r3 = Region("r3")
+  with r2:
+    r2.root = [47, r3]
+    with r3:
+      r3.root = 11
+  x = r2.freeze()
+
+The resulting value in ``x`` is the list ``[47, 11]``, i.e.
+``r2``'s root, with the frozen content of the nested region ``r3``
+as the second element. As a side-effect of the above, the region
+objects ``r2`` and ``r3`` become empty and independent.
+
+Freezing an open region raises a ``FreezeException``.
+
+
+.. _immutable:
+
+Immutable Objects
+-----------------
+
+An immutable object's observable state cannot be changed.
+(Unobservable state such as its reference count can change.)
+An immutable object may only reference other immutable objects.
+
+All attempts to change an immutable object, e.g. a write to a
+field, will raise a ``ImmutabilityException``, and the object will
+be left unchanged.
+
+
+Concurrent Owner
+----------------
+
+A concurrent owner (cown for short) is a *resource* that is only 
+accessible from within behaviours that have successfully acquired
+it. A cown can be acquired by at most one behaviour at a time.
+
+A cown is a thin wrapper around a `region object`_. A cown must be
+created from an `independent region`_ (otherwise an
+``CownCreationException`` is raised)::
+
+  c = cown(Region("r1"))
+
+A region inside a cown is `nested`_ inside that cown, so cannot be used
+to create another cown, or be nested inside some other region while 
+it is in the cown.
+
+Cowns can be freely stored in fields without creating a nesting
+relation between the region of the object and the region in the cown::
+
+  c = cown(Region("r1"))
+  r2 = Region("r2")
+  r3 = Region("r3")
+  with r2:
+    with r3:
+      r1.root = c  # OK
+      r2.root = c  # OK
+
+A cown's region can be accessed in two ways: *moving* and *borrowing*::
+
+  r1 = c.move()
+  r2 = c.borrow()
+
+As the names imply, moving takes a region out of the cown whereas
+borrowing keeps a region in the cown. Taking a region out of a cown
+detaches it from the cown, and makes the region independent. This
+allows the region to be nested in another region, used to create 
+another cown, etc. 
+
+A cown's region can be updated by the method ``install()``::
+
+  r = Region("r")
+  c.install(r)
+
+Calls to ``move()``, ``borrow()`` or ``install()`` on a cown that is
+not acquired by the current behaviour raises a ``CownNotAcquiredException``.
+
+
+Behaviours
+----------
+
+A behaviour can be thought of as a task with a set of cowns that must
+be acquired by the runtime before the task can run. A behaviour
+has no return value.
+
+We refer to behaviours whose cown sets are overlapping as *overlapping
+behaviours*. The runtime guarantees that overlapping behaviours are
+serialised. 
+
+Behaviours are created (we say spawned) using a new syntactic construct
+called ``when``. The following code example spawns a behaviour that 
+must acquire the cown ``c1`` to run (this is handled automatically 
+by the runtime)::
+
+  when (c1):
+    r = c1.borrow()
+    with r:
+      ...
+
+The following code spawns a behaviour that swaps the contents of two
+cowns::
+
+  when (c1, c2):
+    r1, r2 = c1.move(), c2.move()
+    c2.install(r1)
+    c1.install(r2)
+
+
+Ordering Behaviours
+-------------------
+
+The program order of spawns of overlapping behaviours controls the 
+happens-before relation between them. In the following example, 
+behaviour *b1* is guaranteed to run before *b2* but not before *b3*::
+
+  when (c1, c2):   # b1
+    ... 
+
+  when (c2):       # b2
+    ...
+
+  when (c3):       # b3
+    ...
+
+To ensure that *b3* does not run before *b1*, we can either introduce
+a temporary cown to make them overlapping::
+
+  c4 = cown()          # Empty cown
+  when (c1, c2, c4):   # b1
+    ... 
+
+  when (c2):           # b2 -- can run as soon as b1 finishes
+    ...
+
+  when (c3, c4):       # b3 -- can run as soon as b1 finishes
+    ...
+
+
+or we can spawn *b3* at the end of *b1*::
+
+  when (c1, c2):   # b1
+    ... 
+    when (c3):     # b3
+      ...
+
+  when (c2):       # b2
+    ...
+
+Note that program order refers to order of execution in a single 
+behaviour. In the following case, *b2* may run before or after *b4*::
+
+  c = cown(Region("r"))
+  when ():     # b1
+    when (c1): # b2
+      ...
+
+  when ():     # b3
+    when (c1): # b4
+      ...
+
+Examples
+========
+
+TODO
+
+
+Glossary
+========
+
+.. _independent region:
+
+independent region
+  A region that does not have a parent region.
+
+nested regions
+  The region _c_ is nested inside the region _p_ if an object
+  in _p_ has a field that points to _c_, or if _p_'s root is _c_.  
+
+.. _region:
+
+region
+  A set of mutable objects including a region object.
+
+.. _region object:
+
+region object
+  A single instance of the class ``Region`` that acts as a 
+  frontend for a region.
+
+root or root field
+  A field in a region object that holds a mutable object in
+  the region. Access to a region's root field requires that
+  the region is open.
+
+open region
+  A region r is open if there is a `with r` block on the 
+  stack. An open region can grown (new objects allocated in
+  the region), shring (objects in the region are deallocated),
+  and read and written.
+
+closed region
+  Objects in a closed region are not accessible to the program 
+  without first opening the region. 
+
+.. _cown:
+
+cown or concurrent owner
+  TODO
+
+cown set
+  The set of cowns that must be acquired by a behaviour in order
+  for it to run.
+
+.. _behaviour:
+.. _behaviours:
+
+behaviour
+  TODO
+  
+spawning a behaviours
+  TODO
+
+happens-before relation
+  TODO
+
+.. _acquire:
+
+acquire a cown
+  A behaviour implicitly acquires all cowns in its cown set before
+  transitioning to the running state. The runtime ensures that
+  acquisition is deadlock and livelock free.
+
+Open Questions
+==============
+
+- What is the semantics of opening? order? nesting?
+- How do we ensure that an object isn't stored in a local variable whose lifetime is longer than the open-scope of its region?
+- Merging, freezing and nesting is sound because we only allow a region object to be referenced from one field
+- Can an immutable object have a mutable class?
