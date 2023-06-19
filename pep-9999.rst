@@ -1,6 +1,6 @@
 PEP: 9999
 Title: The FrankenPEP for Venice and BoC
-Author: Matthew Johnsson, Matthew Parkinsson, Sylvan Clebsch, Tobias Wrigstad
+Author: Matthew Johnson, Matthew Parkinson, Sylvan Clebsch, Tobias Wrigstad
 Status: Draft
 Type: Standards Track
 Content-Type: text/x-rst
