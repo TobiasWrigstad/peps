@@ -13,17 +13,19 @@ Abstract
 
 The PEP proposes an extension to Python with "Behaviour-oriented
 Concurrency", a new concurrency model that is safe (in the sense
-of no data races) and does not require a GIL.
+of being guaranteed to be free from data races) and does not 
+require a GIL.
 
 The PEP extends Python with four new concepts: *behaviours*, *cowns*,
 *regions* and *region objects*.
 
-A program's heap is partitioned into isolated regions. Each region
-is reified as a region object that allows explicit region
+We divide objects into two categories, mutable and immutable. All
+mutable objects in a program are divided into isolated regions. Each 
+region is reified as a region object that allows explicit region
 manipulation. Region objects can be wrapped in cowns which allows
-them to be shared between "threads", but enforces dynamically that
-the contents of a cown is visible to at most one "thread" of
-control at a time. Finally, a behaviour is a task that operates on
+them to be shared between concurrent tasks, but enforces dynamically 
+that the contents of a cown is visible to at most one running task 
+at a time. Finally, a behaviour is a task that operates on
 zero or more acquired cowns.
 
 The isolation of regions ensure that accesses to objects are never
@@ -58,7 +60,7 @@ a program into isolated *regions*. Each region has a single entry
 point that we call a *region object*. That regions are isolated
 means that the intersection of any two regions is empty: no
 mutable object is reachable from more than one region (with the
-exception of region objects).
+exception of region objects and cowns).
 
 Unlike e.g. a finish/async model, behaviours do not join at a
 particular program point. Such a model encourages a fork/join
@@ -75,17 +77,20 @@ In order to transition from spawned to running, a behaviour needs
 to *acquire* all its cowns. (If the behaviour has no parameter, 
 it can transition to running immediately.) Acquiring a cown can 
 be likened to acquiring a specific lock for the region wrapped 
-in the cown. The implementation guarantees that multiple
-spawned behaviours whose parameters include the same cowns
-will not deadlock, and that only one of the behaviours
-will be able to run at a time.
+in the cown in the sense that it ensures that only one behaviour 
+at a time has exclusive access, from its start until it finishes. 
+The implementation guarantees that multiple spawned behaviours 
+whose parameters include the same cowns will not deadlock, and that 
+only one of such behaviours will be able to run at a time.
 
 Thus, when a behaviour starts running, it has exclusive access to
 all mutable state that it can reach. Therefore, it cannot race
 with concurrent behaviours.
 
 When a behaviour finishes, it releases all cowns so that
-they can be acquired by other scheduled behaviours.
+they can be acquired by other scheduled behaviours. (It is not
+possible to manually release a cown, nor to release it before
+a behaviour finishes.)
 
 One of the key advantages of BoC is that it allows happens-before
 relations between behaviours to be expressed easily in a readable
@@ -104,16 +109,32 @@ as the entry point into a region. In addition to references from
 the region itself, the region object can have a single incoming
 reference from another region.
 
-Let ``region(o)`` be a function that returns the region object for
-the region to which ``o`` belongs and ``is_region_obj(r)`` be a
-function that returns ``True`` if ``r`` is a region object.
-Assuming that all objects are mutable or region objects, the
-following function returns ``True``::
+We distinguish mutable objects from `immutable objects`_. The latter 
+do not live in regions and can be referenced freely from any region.
+For now, we will concentrate on mutable objects only as they are
+the one's requiring special treatment (to preserve `region isolation`_).
+
+Below, we will use the functions ``region(o)``, ``is_region_obj(r)``
+and ``is_immutable(o)`` to explain properties of the system. These
+functions are not part of the programming model, just useful in this
+documentation. 
+
+The function ``region(o)`` returns the region object for the region
+that contains the mutable object ``o``, or ``None`` if ``o`` is 
+immutable. 
+The function ``is_region_obj(r)`` tests whether ``r`` is a region
+object (and if so returns ``True``).
+The function ``ìs_immutable(o)`` tests whether ``o`` is immutable or
+not.
+
+With these functions in place, we can explain region isolation 
+using the following code example, which is guaranteed to return 
+``True`` if ``o`` is a mutable object:
   
    def example(o):
      r1 = region(o)
      r2 = region(o.f)     # Assume o.f is defined and not None
-     return r1 == r2 or is_region_obj(r2)
+     return r1 == r2 or is_region_obj(r2) or (r2 == None and is_immutable(o.f))
 
 
 Region Isolation
@@ -144,10 +165,10 @@ This creates a new region which is empty except for the region
 object itself. The optional name is used in messages in exceptions
 for debugging purposes.
 
-A region has a field ``root`` which points to a single object in
-the region. This field is initialised to ``None``.
-
-  **TODO** Do we allow other fields to be created in a region obj?
+To add an object in a region, we first open the region (see below), 
+allocate the object we want to add, and then store the object in a field 
+in the region object, or in a field of another object in the
+region. 
 
 
 Opening and Closing Regions
@@ -157,8 +178,8 @@ Regions have two states: *open* and *closed*. Regions are closed
 upon creation. When a region is closed, its objects (and `nested
 regions`_) are not accessible to the program::
   
-  x = r.root         # raises RegionIsolationError
-  r.root = object()  # -''-
+  x = r.field         # raises RegionIsolationError
+  r.field = object()  # -''-
 
 Regions are opened using the standard ``with`` construct::
   
@@ -166,20 +187,20 @@ Regions are opened using the standard ``with`` construct::
   # r is now closed
   with r:
     # r is now open
-    x = r.root         # OK, read r's root into stack variable x
-    r.root = object()  # OK, store new object in r's root
+    x = r.field         # OK, read r's root into stack variable x
+    r.field = object()  # OK, store new object in r's root
   # r is now closed again
 
-  **TODO** How should we guard against the following situation?
+**TODO** How should we guard against the following situation?
 
   ::
 
     r1 = Region("r1")
     x = None
     with r1:
-      r1.root = [42]
-      x = r1.root
-    print(x[0])  # Accesses object inside closed region
+      r1.field = { 'key' : 'value '}
+      x = r1.field
+    print(x)  # Accesses object inside closed region
 
 The Current Region
 ~~~~~~~~~~~~~~~~~~
@@ -226,14 +247,14 @@ it makes code more compositional.)
 Nesting Regions
 ~~~~~~~~~~~~~~~
 
-Regions can be nested -- this happens automatically when an
+Regions can be *nested* -- this happens automatically when an
 object in a region stores a region object. The following code
 creates a region with a list object whose elements are all
 region objects::
 
   r1 = Region("r1")
   with r1:
-    r1.root = [Region("r%d") % i for i in range(2,5)]
+    r1.field = [Region("r%d") % i for i in range(2,5)]
 
 If region ``r1`` is nested inside region ``r2``, we say that
 ``r2`` is the (direct) parent or ``r1``. A region that is not
@@ -248,11 +269,11 @@ multiple regions will raise a ``NestingException``::
   r2 = Region("r2")
   r3 = Region("r3")
   with r1:
-    r1.root = [r3]       # OK, nests r3 in r1
+    r1.field1 = [r3]       # OK, nests r3 in r1
   with r2:
-    r2.root = r3         # raises NestingException
+    r2.field2 = r3         # raises NestingException
   with r1:
-    append(r1.root, r3)  # raises NestingException
+    append(r1.field1, r3)  # raises NestingException
 
 Changing the nesting topology is possible by first detaching the
 region before the second nesting. Detaching a region makes it
@@ -260,16 +281,16 @@ independent::
   
   ...
   with r1:
-    r1.root = None   # detaches r3 from r1, r3 becomes independent
+    r1.field1 = None   # detaches r3 from r1, r3 becomes independent
   with r2:
-    r2.root = r3     # OK
+    r2.field2 = r3     # OK
 
 Python's swap semantics is supported::
 
   ...
   with r1:
     with r2:
-      r1.root, r2.root = r2.root, r1.root
+      r1.field1, r2.field2 = r2.field2, r1.field1
 
 Opening a nested region is only permitted if its parent region is open.
 Thus, the following code leads to a ``NestingException``::
@@ -277,9 +298,9 @@ Thus, the following code leads to a ``NestingException``::
   r1 = Region("r1")
   r2 = Region("r2")
   with r1:
-    r1.root = r2  # Nest r2 directly inside r1
-  with r2:        # raises a NestingException sinde r1 is closed
-    ...           # unreachable code
+    r1.field = r2  # Nest r2 directly inside r1
+  with r2:         # raises a NestingException since r1 is closed
+    ...            # unreachable code
       
     
 Merging Regions
@@ -294,7 +315,7 @@ The code above *moves* all objects in ``r2`` into ``r1``. The
 variable ``x`` holds the contents of ``r2.roots``.
 
 After merging, the ``r2`` region still exists but is empty --
-``root`` is ``None`` etc.
+all its fields are ``None`` etc.
 
 Merging a region is *shallow*, meaning that nested regions are
 unaffected.
@@ -318,17 +339,28 @@ frozen object graph. Consider the following code::
   r2 = Region("r2")
   r3 = Region("r3")
   with r2:
-    r2.root = [47, r3]
+    r2.field = [47, r3]
     with r3:
-      r3.root = 11
+      r3.field = 11
   x = r2.freeze()
 
-The resulting value in ``x`` is the list ``[47, 11]``, i.e.
-``r2``'s root, with the frozen content of the nested region ``r3``
+The resulting value in ``x`` is the list ``[47, 11]`` stored in
+``r2``, with the frozen content of the nested region ``r3``
 as the second element. As a side-effect of the above, the region
 objects ``r2`` and ``r3`` become empty and independent.
 
 Freezing an open region raises a ``FreezeException``.
+
+Note that freezing avoids several of the problems that led to
+the `rejection <https://mail.python.org/pipermail/python-dev/2006-February/060793.html>`_ 
+of `PEP 351 <https://peps.python.org/pep-0351/>`_:
+
+- The side-effects of freezing a region are known because the 
+  region is isolated
+- You only freeze a closed region, meaning there are no variables
+  etc. that can reach the contents of the region and can witness
+  the change in mode
+- Freezing is in-place, not by copy
 
 
 .. _immutable:
@@ -353,7 +385,7 @@ accessible from within behaviours that have successfully acquired
 it. A cown can be acquired by at most one behaviour at a time.
 
 A cown is a thin wrapper around a `region object`_. A cown must be
-created from an `independent region`_ (otherwise an
+created from an `independent region`_ (otherwise a
 ``CownCreationException`` is raised)::
 
   c = cown(Region("r1"))
@@ -370,8 +402,8 @@ relation between the region of the object and the region in the cown::
   r3 = Region("r3")
   with r2:
     with r3:
-      r1.root = c  # OK
-      r2.root = c  # OK
+      r1.field = c  # OK
+      r2.field = c  # OK
 
 A cown's region can be accessed in two ways: *moving* and *borrowing*::
 
@@ -436,7 +468,7 @@ behaviour *b1* is guaranteed to run before *b2* but not before *b3*::
   when (c2):       # b2
     ...
 
-  when (c3):       # b3
+  when (c3):       # b3, does not overlap with b1 or b2
     ...
 
 To ensure that *b3* does not run before *b1*, we can either introduce
