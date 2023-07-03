@@ -31,6 +31,12 @@ zero or more acquired cowns.
 The isolation of regions ensure that accesses to objects are never
 contended.
 
+.. image:: pep-9999/overview.svg
+  :alt: Overwiew of the moving pieces
+
+This picture may seem complicated, it contains everything 
+we need to explain all aspects of this PEP.
+
 
 Proposal
 ========
@@ -46,21 +52,32 @@ The following description first discusses the rationale for
 adopting a new concurrency model in Python. The rest of the
 description then takes a bottom-up approach. It starts by defining
 regions and their reification in Python as region objects, and
-operations on region objects. It then defines behaviours and their
-reification in Python in form of the ``when`` language construct.
+operations on region objects. It then defines cowns and behaviours 
+and how behaviours are exposed to Python programmers in form of 
+the ``when`` language construct.
 
 
 Rationale
 ---------
 
 Behaviour-oriented Concurrency (BoC for short) is a concurrency
-model where programs are comprised of tasks that operate on data.
-We call such tasks *behaviours* and partition all mutable data in
-a program into isolated *regions*. Each region has a single entry
-point that we call a *region object*. That regions are isolated
-means that the intersection of any two regions is empty: no
-mutable object is reachable from more than one region (with the
-exception of region objects and cowns).
+model where programs are comprised of tasks that operate on special
+data objects called *cowns*. We call the tasks *behaviours*. A
+behaviour only has access its cowns and objects created inside the
+behaviour. 
+
+A cown is an object that wraps a *region* object. The only way to 
+access a cown's content is to spawn a behaviour that runs inside the 
+cown. The runtime ensures that the behaviour has exclusive access
+to cown's content when it runs. 
+
+A region is a set of mutable objects with a special *region object*
+that serves as its entry point. Regions do not overlap, meaning
+the intersection of two regions is always empty. Furthermore, 
+objects inside a region can only be pointed to by other objects in 
+the same region. The region object can be pointed to by any of "its"
+objects; additionally -- it can be referenced by a *single* reference
+from a cown, stack variable, or field of an object in another region.
 
 Unlike e.g. a finish/async model, behaviours do not join at a
 particular program point. Such a model encourages a fork/join
@@ -75,13 +92,11 @@ zero or more cowns each wrapping one region object.
 
 In order to transition from spawned to running, a behaviour needs
 to *acquire* all its cowns. (If the behaviour has no parameter, 
-it can transition to running immediately.) Acquiring a cown can 
-be likened to acquiring a specific lock for the region wrapped 
-in the cown in the sense that it ensures that only one behaviour 
-at a time has exclusive access, from its start until it finishes. 
-The implementation guarantees that multiple spawned behaviours 
-whose parameters include the same cowns will not deadlock, and that 
-only one of such behaviours will be able to run at a time.
+it can transition to running immediately.) The runtime ensures that
+only one behaviour at a time can acquire a cown. The implementation 
+guarantees that multiple spawned behaviours whose parameters include 
+the same cowns will not deadlock, and that only one of such behaviours 
+will be able to run at a time.
 
 Thus, when a behaviour starts running, it has exclusive access to
 all mutable state that it can reach. Therefore, it cannot race
@@ -92,10 +107,13 @@ they can be acquired by other scheduled behaviours. (It is not
 possible to manually release a cown, nor to release it before
 a behaviour finishes.)
 
-One of the key advantages of BoC is that it allows happens-before
+One of the key features of BoC is that it allows happens-before
 relations between behaviours to be expressed easily in a readable
 way by tying it to program order and how cowns are
-chained across behaviours. See `Examples`_.
+chained across behaviours. In combination with the data-race 
+freedom from isolation, this makes is considerably easier to 
+reason about concurrent programs, than less structured models. 
+See `Examples`_.
 
 
 Regions and Region Objects
@@ -129,12 +147,17 @@ not.
 
 With these functions in place, we can explain region isolation 
 using the following code example, which is guaranteed to return 
-``True`` if ``o`` is a mutable object:
+``True`` if ``o`` is a mutable object::
   
    def example(o):
      r1 = region(o)
      r2 = region(o.f)     # Assume o.f is defined and not None
-     return r1 == r2 or is_region_obj(r2) or (r2 == None and is_immutable(o.f))
+     return r1 == r2 or \                       # (1)
+            is_region_obj(r2) or \              # (2)
+            (r2 == None and is_immutable(o.f))  # (3)
+
+The numbers in the cases above refer to the orange number in the
+overview picture at the start of the PEP.
 
 
 Region Isolation
@@ -202,6 +225,13 @@ Regions are opened using the standard ``with`` construct::
       x = r1.field
     print(x)  # Accesses object inside closed region
 
+One possible solution is to perform a trivial escape analysis 
+on code at import time and insert a dynamic error where we 
+detect the leak, possibly guarded by a dynamic check. This will
+avoid false positives and only trigger an error when it actually
+occurs.
+
+
 The Current Region
 ~~~~~~~~~~~~~~~~~~
 
@@ -216,6 +246,12 @@ creates one object in each region::
     o1 = object()   # Created in r1
   with r2:
     o2 = object()   # Created in r2
+
+In the drawing notation of above, this can be illustrated thus:
+
+.. image:: pep-9999/current_region_1.svg
+  :width: 250px
+  :alt: Creating two regions and allocating one object in each
 
 The following code snippet is equivalent to the one above::
   
@@ -236,7 +272,16 @@ is legal::
   with r1:
     with r2:
       with r1:
-        r1.root = object()
+        r1.field = object()
+
+.. image:: pep-9999/current_region_2.svg
+  :width: 250px
+  :alt: Adding an object to r1, and storing it in a field
+
+Note how storing the new object in ``r1.field`` creates a reference
+from the region object to the new object. Unless an object is reachable
+from the region object, it will become garbage once the region closes,
+since there can be no local variables that may reference it.
 
 (Note: there is no need to open a region multiple times but allowing
 it makes code more compositional.)
@@ -292,6 +337,15 @@ Python's swap semantics is supported::
     with r2:
       r1.field1, r2.field2 = r2.field2, r1.field1
 
+**Note:**
+The reason why we do not allow a region to be nested multiple
+times inside the same region is to make it easy to move a region 
+and change the topology. A more relaxed design is possible where
+we count how many times a region *r* is nested in its parent, and 
+decrement *r*'s counter each time a field containing a *r* is 
+overwritten by some other value. In this case detachment happens
+only when the counter reaches 0.
+
 Opening a nested region is only permitted if its parent region is open.
 Thus, the following code leads to a ``NestingException``::
 
@@ -312,7 +366,8 @@ A closed region can be *merged* into an open region::
   x = r2.merge(r1)
 
 The code above *moves* all objects in ``r2`` into ``r1``. The
-variable ``x`` holds the contents of ``r2.roots``.
+variable ``x`` is a list (if necessary) of all the contents 
+of all variables in ``r2``. 
 
 After merging, the ``r2`` region still exists but is empty --
 all its fields are ``None`` etc.
@@ -522,8 +577,8 @@ independent region
   A region that does not have a parent region.
 
 nested regions
-  The region _c_ is nested inside the region _p_ if an object
-  in _p_ has a field that points to _c_, or if _p_'s root is _c_.  
+  The region *c* is nested inside the region *p* if an object
+  in *p* has a field that points to *c*, or if *p*'s root is *c*.  
 
 .. _region:
 
