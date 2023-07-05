@@ -193,7 +193,7 @@ implemented using ``__setattr__``::
      if region(self) == region(value) or \
        is_region_obj(value) or \
        is_immutable(value):
-       ... # go ahead and do self.attr_name = value
+       object.__setattr__(self, attr_name, value) # perform update!
      else:
        raise RegionIsolationError()
 
