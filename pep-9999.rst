@@ -16,17 +16,18 @@ Concurrency", a new concurrency model that is safe (in the sense
 of being guaranteed to be free from data races) and does not 
 require a GIL.
 
-The PEP extends Python with four new concepts: *behaviours*, *cowns*,
+The PEP extends Python with tree new concepts: *behaviours*,
 *regions* and *region objects*.
 
 We divide objects into two categories, mutable and immutable. All
 mutable objects in a program are divided into isolated regions. Each 
 region is reified as a region object that allows explicit region
-manipulation. Region objects can be wrapped in cowns which allows
-them to be shared between concurrent tasks, but enforces dynamically 
-that the contents of a cown is visible to at most one running task 
-at a time. Finally, a behaviour is a task that operates on
-zero or more acquired cowns.
+manipulation. Regions can be *shared* or *private*. Private regions
+can be manipulated synchronously, whereas shared regions can be 
+manipulated only asynchronously. A dynamic check ensures that  
+the contents of a shared region is accessed by at most one running 
+task at a time. Finally, a behaviour is a task that operates on
+zero or more regions.
 
 The isolation of regions ensure that accesses to objects are never
 contended.
@@ -43,8 +44,8 @@ Proposal
 
 Summary:
 
-* Add the new concepts `behaviour`_ and `cown`_
-* Add the new concepts `region`_ and `region object`_
+* Add the new concept `behaviour`_ 
+* Add the new concepts `region`_, `shared region`_, `private region`_ and `region object`_
 * Add a new runtime component for scheduling and running behaviours
 * Add new dynamic checking to enforce isolation
 
@@ -52,68 +53,81 @@ The following description first discusses the rationale for
 adopting a new concurrency model in Python. The rest of the
 description then takes a bottom-up approach. It starts by defining
 regions and their reification in Python as region objects, and
-operations on region objects. It then defines cowns and behaviours 
-and how behaviours are exposed to Python programmers in form of 
-the ``when`` language construct.
+operations on region objects. It then distinguishes private and
+shared regions and introduces behaviours and how behaviours are
+exposed to Python programmers in form of the ``when`` language
+construct.
 
 
 Rationale
 ---------
 
 Behaviour-oriented Concurrency (BoC for short) is a concurrency
-model where programs are comprised of tasks that operate on special
-data objects called *cowns*. We call the tasks *behaviours*. A
-behaviour only has access its cowns and objects created inside the
-behaviour. 
+model where programs are comprised of tasks that we call
+*behaviours*. A behaviour only has access to immutable objects,
+objects created inside the behaviour, and objects inside regions
+passed to the behaviour at the time of its creation.
 
-A cown is an object that wraps a *region* object. The only way to 
-access a cown's content is to spawn a behaviour that runs inside the 
-cown. The runtime ensures that the behaviour has exclusive access
-to cown's content when it runs. 
+A region is a set of mutable objects. We refer to the reified set
+as a *region object*. Regions do not overlap, so the intersection
+of two regions is always empty. Furthermore, objects inside a
+region can only be pointed to by other objects in the same region.
 
-A region is a set of mutable objects with a special *region object*
-that serves as its entry point. Regions do not overlap, meaning
-the intersection of two regions is always empty. Furthermore, 
-objects inside a region can only be pointed to by other objects in 
-the same region. The region object can be pointed to by any of "its"
-objects; additionally -- it can be referenced by a *single* reference
-from a cown, stack variable, or field of an object in another region.
+A regions is either private or shared. Shared regions can form any
+topology. Private regions always form a forest topology. If a
+private region object is only referenced from stack variables or
+from "its own objects", it is a *root*, and has no enclosing
+region. If a private region is referenced from objects other than
+its own, those objects must all be in the same region. We refer to
+this enclosing region as the *parent region*. The forest topology
+is enforced by dynamic checking.
 
-Unlike e.g. a finish/async model, behaviours do not join at a
-particular program point. Such a model encourages a fork/join
-style way of building programs, which have a hard time saturating
-multicore machines due to Amdahl's law. In BoC, programs
-"continue" by behaviours spawning more behaviours, and
+Regions are created as private but may be shared using an explicit
+operation. 
+
+Accessing the contents of a region requires *opening* the region.
+A private region can be opened synchronously. A shared region can
+only be opened asynchronously by spawning a behaviour. The runtime
+ensures that behaviours that open the same region never run at the
+same time. 
+
+Unlike e.g. a finish/async model, behaviours do not return values
+or join at a particular program point. Such a model encourages a
+fork/join style way of building programs, which have a hard time
+saturating multicore machines due to Amdahl's law. In BoC,
+programs "continue" by behaviours spawning more behaviours, and
 coordination happens when behaviours operate on the same regions.
 
 Spawning a behaviour can be likened with an asynchronous method
 call to a method that has no return value, and whose arguments are
-zero or more cowns each wrapping one region object.
+zero or more shared regions.
 
 In order to transition from spawned to running, a behaviour needs
-to *acquire* all its cowns. (If the behaviour has no parameter, 
-it can transition to running immediately.) The runtime ensures that
-only one behaviour at a time can acquire a cown. The implementation 
-guarantees that multiple spawned behaviours whose parameters include 
-the same cowns will not deadlock, and that only one of such behaviours 
-will be able to run at a time.
+to *acquire* all its shared regions. (If the behaviour has no
+parameter, it can transition to running immediately.) The runtime
+ensures that only one behaviour at a time can acquire a shared
+region. The implementation guarantees that multiple spawned
+behaviours whose parameters include the same regions will not
+deadlock, and that only one of such behaviours will be able to run
+at a time.
 
-Thus, when a behaviour starts running, it has exclusive access to
-all mutable state that it can reach. Therefore, it cannot race
-with concurrent behaviours.
+Thus, inside a running behaviour, all accessible regions are
+effectively private. In other words, the behaviour has exclusive
+access to all mutable state that it can reach. Therefore, it
+cannot race with concurrent behaviours.
 
-When a behaviour finishes, it releases all cowns so that
-they can be acquired by other scheduled behaviours. (It is not
-possible to manually release a cown, nor to release it before
-a behaviour finishes.)
+When a behaviour finishes, it `releases`_ all shared regions so
+that they can be acquired by other scheduled behaviours. (It is
+not possible to manually release a region, nor to release it
+before a behaviour finishes.)
 
 One of the key features of BoC is that it allows happens-before
 relations between behaviours to be expressed easily in a readable
-way by tying it to program order and how cowns are
-chained across behaviours. In combination with the data-race 
-freedom from isolation, this makes is considerably easier to 
-reason about concurrent programs, than less structured models. 
-See `Examples`_.
+way by tying it to program order and how shared regions are
+chained across behaviours. In combination with the data-race
+freedom from isolation, this makes it considerably easier to
+reason about concurrent programs, than less structured models. See
+`Examples`_.
 
 
 Regions and Region Objects
