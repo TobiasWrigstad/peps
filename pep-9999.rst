@@ -73,7 +73,7 @@ as a *region object*. Regions do not overlap, so the intersection
 of two regions is always empty. Furthermore, objects inside a
 region can only be pointed to by other objects in the same region.
 
-A regions is either private or shared. Shared regions can form any
+A region is either private or shared. Shared regions can form any
 topology. Private regions always form a forest topology. If a
 private region object is only referenced from stack variables or
 from "its own objects", it *independent*, and has no enclosing 
