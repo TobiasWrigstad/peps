@@ -76,7 +76,7 @@ region can only be pointed to by other objects in the same region.
 A regions is either private or shared. Shared regions can form any
 topology. Private regions always form a forest topology. If a
 private region object is only referenced from stack variables or
-from "its own objects", it *independent*, and has no enclosing 
+from "its own objects", it is *independent*, and has no enclosing 
 region. If a private region is referenced from objects other than
 its own, those objects must all be in the same region. We refer to
 the directly enclosing region as the *parent region*. The forest topology
