@@ -66,17 +66,18 @@ Behaviour-oriented Concurrency (BoC for short) is a concurrency
 model where programs are comprised of tasks that we call
 *behaviours*. A behaviour only has access to immutable objects,
 objects created inside the behaviour, and objects inside regions
-passed to the behaviour at the time of its creation.
+passed to the behaviour at the time of its creation, or regions
+it captures from its enclosing lexical scope.
 
 A region is a set of mutable objects. We refer to the reified set
 as a *region object*. Regions do not overlap, so the intersection
 of two regions is always empty. Furthermore, objects inside a
 region can only be pointed to by other objects in the same region.
 
-A regions is either private or shared. Shared regions can form any
+A region is either private or shared. Shared regions can form any
 topology. Private regions always form a forest topology. If a
 private region object is only referenced from stack variables or
-from "its own objects", it is *free*, and has no enclosing 
+from "its own objects", it is free, and has no enclosing 
 region. If a private region is referenced from objects other than
 its own, those objects must all be in the same region. We refer to
 the directly enclosing region as the *parent region*. The forest topology
@@ -132,43 +133,46 @@ concurrent programs, than less structured models.
 Concepts
 ========
 
-  **TODO** Is the region object in the region or not? Sometimes
-  the writing is as it it is (e.g. can reference all its objects)
-  and sometimes not (it can be referenced from outside the region).
-
-
 Region
-  A region is a set of objects that are only referenced from within the region.
+  A region is a set of objects that are only referenced from within the region,
+  or from its region object.
 
 Region object
   An object that reifies a region and permits manipulations of the entire region.
 
+Implicitly created region
+  A technical construct used under the hood to allow creation of objects
+  without an explicit owner. The idea is that an implicitly related region
+  membership will be changed to another region based on data-flow.
+  (See `assignment and ownership`_.)
+  
 Behaviour
   A task that can access the memory of zero or more regions.
 
 Owned
-  Belonging to region (in the sense of being nested in).
+  Belonging to an *explicitly* created region (in the sense of being nested in).
 
 Free
-  Belonging to nothing.
+  Belonging to an *implicitly* created region. A programmer can think about this
+  case as "there is no owner". 
 
 Private
-  Has at most one owner.
+  Has at most one owner. Dual of shared.
 
 Shared
-  Ownership can be shared across multiple owners.
-
-Free object
-  An object that does not belong to a region.
+  Ownership can be shared across multiple owners. Dual of private.
 
 Owned object
-  An object in a region.
+  An object in an explicitly created region.
 
-Free region
-  A region that is a root in a region tree.
+Free object
+  An object in an implicitly created region.
 
 Owned region
-  A region that is nested inside another.
+  A region that is nested inside another explicitly created region.
+
+Free region
+  A region that is a root in a region tree (nested in an implicitly created region).
 
 Immutable object
   An object that cannot be mutated.
@@ -183,16 +187,26 @@ Closed region
 Capsule Summary of Semantics
 ============================
 
-  **TODO** Missing the integration with "legacy" Python. Need to
-  either give a good explanation of how that works, or explicitly
-  delimit ourselves at this point.
-
-
 All objects and regions are free and private on creation.
 A free region or object can become *owned* by a(nother) region.
 
-A *private region* can be turned into a *shared region*, but not the other way around.
-Objects are always private with the exception of region objects for shared regions.
+The following code creates a region and an object, opens the
+region (see `region isolation`_), and makes the object owned by
+the region::
+
+  r = Region()   # closed, free and private
+  o = object()   # free 
+  with r:        # open r
+    r.f = o      # o becomes owned by r
+
+A *private region* can be turned into a *shared region*, but not
+the other way around (see further `concurrency`_)::
+
+  r = Region()
+  r.make_shareable()
+
+Objects are always private with the exception of region objects
+for shared regions.
 
 A region that is *private and owned* can become *private and free*
 if all incoming references to its region object from the enclosing
@@ -204,20 +218,13 @@ Topological Constraints
 
 Objects in a region can only be referenced from within the region. 
 
-  **TODO:** Missing Matt's implicit(R)
+A mutable object can only point to:
 
-
-An *owned object* can only point to:
-
-* *owned objects* in the same region,
-* *immutable objects*, or
+* objects in the same region,
+* immutable objects, or
 * region objects (of any region)
 
-A *free object* can point to anything.
-
-  **TODO** Note legacy objects.
-
-An *immutable object* can only point to other immutable objects.
+An immutable object can only point to other immutable objects.
 
 
 Assignment and Ownership
@@ -228,34 +235,36 @@ ownership. In particular, it explains how objects become owned by
 regions, and how region nesting works. (1) and (2) are notes on
 side-effects explained below.
 
-Let ``x`` and ``y`` be non-region objects, and ``R`` be a region object.
+Let ``x`` and ``y`` be objects and ``R`` be a region object.
 Let ``region(x) == None`` mean that ``x`` is free.
-Let ``region(x) == R`` mean that ``x`` is *owned* by ``R``.
+Let ``region(x) == R`` mean that ``x`` is owned by ``R``.
 
-The assignment ``x.f = y`` is legal iff:
+The assignment ``x.f = y`` is legal (with respect to ownership) iff:
 
-* ``region(x) == region(y)``, or
-* ``region(x) == None``, or
-* ``region(x) == R`` and ``region(y) == None`` **(1)**
+* ``region(x) == region(y) == None`` **(1)**, or
+* ``region(x) == region(y) != None``, or
+* ``region(x) == None`` and ``region(y) == R`` **(2)**, or
+* ``region(x) == R`` and ``region(y) == None`` **(2)**
  
-The assignment ``R.f = y`` is legal iff:
+The assignment ``R.f = y`` is legal (with respect to ownership) iff:
 
 * ``region(y) == R``, or
-* ``region(y) == None`` **(1)**
+* ``region(y) == None`` **(2)**
 
-The assignment ``x.f = R`` is legal iff:
+The assignment ``x.f = R`` is legal (with respect to ownership) iff:
 
+* ``R`` is a shared region, or
 * ``region(x) == R``, or
-* ``region(x) == None``, or
-* ``region(x) == R'`` and ``R`` is *owned* by ``R'``, or
-* ``region(x) == R'`` and ``R`` is free **(2)**
- 
+* ``region(x) == None`` **(2)**, or
+* ``region(x) == R'`` and ``R`` is owned by ``R'``, or
+* ``region(x) == R'`` and ``R`` is free **(3)**
+
+  
 **Notes on side-effects:**
 
-(1) ``y`` and all free objects reachable from it become *owned* by ``R``.
-    If we find an *owned* object that is *owned* by something other
-    than ``R`` when scanning ``y``, the operation raises an exception.
-(2) ``R`` becomes *owned* by ``R'``.
+(1) Fusing implicit regions: As a side-effect, we merge these implicitly created regions into one implicitly created region.
+(2) Converting implicit ownership to explicit: As a side-effect, we merge the implicitly created region into ``R``.
+(3) Nesting: ``R`` becomes owned by ``R'``.
 
 Any assignment that does not abide by the above rules will raise
 an exception. Example::
@@ -267,11 +276,20 @@ an exception. Example::
     r1.f = r3    # OK, r3 becomes owned by r1
     r2.f = r3    # Throws exception since r3 is already owned by r1
 
+
+**TODO** Check the following, and add implicit(R):
+
+  To prevent cyclical region topologies, when we do ``R.f = R'``,
+  where ``R'`` is **not** shared, we have to do two things:
+  
+  * Ensure that ``region(r2) == None``
+  * Walk the ownership chain of ``r1`` until we find
+    shared or free region, and if that top level region is free, it
+    cannot be ``r2``. I think that's sufficient?
+
     
 Region Isolation
 ----------------
-
-  **TODO:** References to implicit(R)
 
 A region is either **open** or **closed**. When created, a region
 is always closed. When a region is closed, its
@@ -293,26 +311,6 @@ It is possible to open multiple regions in a single hit::
     ... # r1 and r2 are both open
 
 
-Enforcing Region Isolation
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-  **TODO** Update code example with implicit(R).
-
-Region isolation is enforced by runtime checking. A write to a
-field will raise an exception if the object stored in the field
-belongs to another region (etc, see `assignment and ownership`_).
-The following code sketches how isolation could be implemented
-using ``__setattr__``::
-  
-   def __setattr__(self, attr_name, value):
-     if region(self) == region(value) or \
-       is_region_obj(value) or \
-       is_immutable(value):
-       object.__setattr__(self, attr_name, value) # perform update!
-     else:
-       raise RegionIsolationError()
-    
-
 Region-Wide Operations
 ----------------------
 
@@ -323,16 +321,15 @@ Freeze
   An operation that makes all objects in a region immutable.
 
 Via the region object it is possible to operate on an entire region.
-We already saw some examples of that in `assignment and ownership`_.
 
 
 Freezing Regions
 ~~~~~~~~~~~~~~~~
 
-A private closed region ``R`` can be frozen. This makes its
-owned objects immutable (and free), and ``R`` becomes empty.
-Freezing affects owned regions as well as their contained objects
-(i.e. it is deep)::
+A region ``R`` can be frozen if it is free, private, and closed.
+Freezing a region makes its owned objects immutable (and free),
+and ``R`` becomes empty. Freezing affects owned regions as well as
+their contained objects (i.e. it is deep)::
 
   r2 = Region("r2")
   r3 = Region("r3")
@@ -436,7 +433,15 @@ We refer to behaviours whose regions are overlapping as *overlapping
 behaviours*. The runtime guarantees that overlapping behaviours are
 serialised.
 
-  **TODO** What about capturing free regions?
+  **TODO** Is the following regarding capturing correct? Are
+  there delays? What happens with the captured variable?
+
+A behaviour can capture regions in the enclosing scope if they
+are free, private and closed::
+
+  region r = Region() # free, private and closed
+  when ():            # immediately runnable
+    ...               # r is open
 
 Because a ``when`` can operate on any number of shared regions, it
 can be used to establish safe synchronous action to different
@@ -519,8 +524,8 @@ Making a Shared Region Private Again
   **TODO** Even more WIP!
 
 It is not possible to make a shared region private again. However, it is
-possible to spawn a behaviour that, once it has dynamically establised
-that is has exclusive access to the share region, moves all its contents
+possible to spawn a behaviour that, once it has dynamically established
+that is has exclusive access to the shared region, moves all its contents
 to a private region.
 
 For now, assume that it is possible to call a method
@@ -552,10 +557,15 @@ field, will raise a ``ImmutabilityException``, and the object will
 be left unchanged.
 
 
+Integration with Existing Python Code
+-------------------------------------
+
+**TODO** Really important to say something about this before
+Wednesday 12/7.
+
+
 Glossary
 ========
-
-  **Probably out of date now.**
 
 .. _region:
 
@@ -565,7 +575,7 @@ region
 .. _private region:
 
 private region
-  TODO
+  A region that is only accessible to one behaviour. 
 
 .. _region object:
 
@@ -591,7 +601,7 @@ closed region
 .. _shared region:
 
 shared region
-  TODO
+  A region whose ownership is/can be shared by multiple other regions.
 
 region set
   The set of regions that must be acquired by a behaviour in order
@@ -601,11 +611,12 @@ region set
 .. _behaviours:
 
 behaviour
-  TODO
+  An asynchronous task spawned through a ``when`` block. It is
+  passed zero or more shared regions that we call its region set.
+  Once these regions have been acquired the behaviour is ready to
+  run. Once the behaviour is finished, all the regions in its
+  region set are released.
   
-spawning a behaviours
-  TODO
-
 happens-before relation
   TODO
 
