@@ -16,8 +16,8 @@ Concurrency", a new concurrency model that is safe (in the sense
 of being guaranteed to be free from data races) and does not 
 require a GIL.
 
-The PEP extends Python with three new concepts: *behaviours*,
-*regions* and *region objects*.
+The PEP extends Python with several new concepts, most notably: 
+*behaviours*, *regions* and *region objects*.
 
 We divide objects into two categories, mutable and immutable. All
 mutable objects in a program are divided into isolated regions. Each 
@@ -35,7 +35,7 @@ contended.
 .. image:: pep-9999/overview.svg
   :alt: Overwiew of the moving pieces
 
-This picture may seem complicated, it contains everything 
+While this picture may seem complicated, it contains everything 
 we need to explain all aspects of this PEP.
 
 
@@ -60,7 +60,7 @@ construct.
 
 
 Rationale
----------
+=========
 
 Behaviour-oriented Concurrency (BoC for short) is a concurrency
 model where programs are comprised of tasks that we call
@@ -76,7 +76,7 @@ region can only be pointed to by other objects in the same region.
 A regions is either private or shared. Shared regions can form any
 topology. Private regions always form a forest topology. If a
 private region object is only referenced from stack variables or
-from "its own objects", it *independent*, and has no enclosing 
+from "its own objects", it is *free*, and has no enclosing 
 region. If a private region is referenced from objects other than
 its own, those objects must all be in the same region. We refer to
 the directly enclosing region as the *parent region*. The forest topology
@@ -126,68 +126,183 @@ relations between behaviours to be expressed easily in a readable
 way by tying it to program order and how regions are shared 
 across behaviours. In combination with the data-race freedom from 
 isolation, this makes it considerably easier to reason about 
-concurrent programs, than less structured models. See `Examples`_.
+concurrent programs, than less structured models. 
 
 
-Regions and Region Objects
---------------------------
+Concepts
+========
 
-  For now, we only talk about private regions. We will come back 
-  to shared regions further down.
-
-A region is a set of mutable objects that are isolated from the
-mutable objects in the rest of the program. Isolation means that
-an object in a region can only be referenced by objects in the
-same region. Every region has a unique *region object* that must
-be explicitly opened before the objects in the region can be 
-accessed.
-
-In addition to the objects in "its region", a region object may 
-be referenced from at objects in at most one other region. 
-
-We distinguish mutable objects from `immutable objects`_. The latter 
-do not live in regions and can be referenced freely from any region.
-For now, we will concentrate on mutable objects only as they are
-the one's requiring special treatment (to preserve `region isolation`_).
-Region objects also do not live in regions (they can be though of
-as a single object living in the intersection of two regions -- 
-the region object's region, and its enclosing region).
-
-Below, we will use the functions ``region(o)``, ``is_region_obj(r)``
-and ``is_immutable(o)`` to explain properties of the system. These
-functions are not part of the programming model, just useful in this
-documentation. 
-
-The function ``region(o)`` returns the region object for the region
-that contains the mutable object ``o``, or ``None`` if ``o`` is 
-immutable. 
-The function ``is_region_obj(r)`` tests whether ``r`` is a region
-object (and if so returns ``True``).
-The function ``ìs_immutable(o)`` tests whether ``o`` is immutable or
-not.
-
-With these functions in place, we can explain region isolation 
-using the following code example, which is guaranteed to return 
-``True`` if ``o`` is a mutable object::
-  
-   def example(o):
-     r1 = region(o)
-     r2 = region(o.f)     # Assume o.f is defined and not None
-     return r1 == r2 or \                       # (1)
-            is_region_obj(r2) or \              # (2)
-            (r2 == None and is_immutable(o.f))  # (3)
-
-The numbers in the cases above refer to the orange number in the
-overview picture at the start of the PEP.
+  **TODO** Is the region object in the region or not? Sometimes
+  the writing is as it it is (e.g. can reference all its objects)
+  and sometimes not (it can be referenced from outside the region).
 
 
+Region
+  A region is a set of objects that are only referenced from within the region.
+
+Region object
+  An object that reifies a region and permits manipulations of the entire region.
+
+Behaviour
+  A task that can access the memory of zero or more regions.
+
+Owned
+  Belonging to region (in the sense of being nested in).
+
+Free
+  Belonging to nothing.
+
+Private
+  Has at most one owner.
+
+Shared
+  Ownership can be shared across multiple owners.
+
+Free object
+  An object that does not belong to a region.
+
+Owned object
+  An object in a region.
+
+Free region
+  A region that is a root in a region tree.
+
+Owned region
+  A region that is nested inside another.
+
+Immutable object
+  An object that cannot be mutated.
+
+Open region
+  A region whose objects are accessible to the program.
+
+Closed region
+  A region whose objects are inaccessible to the program.
+
+
+Capsule Summary of Semantics
+============================
+
+  **TODO** Missing the integration with "legacy" Python. Need to
+  either give a good explanation of how that works, or explicitly
+  delimit ourselves at this point.
+
+
+All objects and regions are free and private on creation.
+A free region or object can become *owned* by a(nother) region.
+
+A *private region* can be turned into a *shared region*, but not the other way around.
+Objects are always private with the exception of region objects for shared regions.
+
+A region that is *private and owned* can become *private and free*
+if all incoming references to its region object from the enclosing
+region are deleted.
+
+
+Topological Constraints
+-----------------------
+
+Objects in a region can only be referenced from within the region. 
+
+  **TODO:** Missing Matt's implicit(R)
+
+
+An *owned object* can only point to:
+
+* *owned objects* in the same region,
+* *immutable objects*, or
+* region objects (of any region)
+
+A *free object* can point to anything.
+
+  **TODO** Note legacy objects.
+
+An *immutable object* can only point to other immutable objects.
+
+
+Assignment and Ownership
+------------------------
+
+The following explains how assignment governs and is governed by
+ownership. In particular, it explains how objects become owned by
+regions, and how region nesting works. (1) and (2) are notes on
+side-effects explained below.
+
+Let ``x`` and ``y`` be non-region objects, and ``R`` be a region object.
+Let ``region(x) == None`` mean that ``x`` is free.
+Let ``region(x) == R`` mean that ``x`` is *owned* by ``R``.
+
+The assignment ``x.f = y`` is legal iff:
+
+* ``region(x) == region(y)``, or
+* ``region(x) == None``, or
+* ``region(x) == R`` and ``region(y) == None`` **(1)**
+ 
+The assignment ``R.f = y`` is legal iff:
+
+* ``region(y) == R``, or
+* ``region(y) == None`` **(1)**
+
+The assignment ``x.f = R`` is legal iff:
+
+* ``region(x) == R``, or
+* ``region(x) == None``, or
+* ``region(x) == R'`` and ``R`` is *owned* by ``R'``, or
+* ``region(x) == R'`` and ``R`` is free **(2)**
+ 
+**Notes on side-effects:**
+
+(1) ``y`` and all free objects reachable from it become *owned* by ``R``.
+    If we find an *owned* object that is *owned* by something other
+    than ``R`` when scanning ``y``, the operation raises an exception.
+(2) ``R`` becomes *owned* by ``R'``.
+
+Any assignment that does not abide by the above rules will raise
+an exception. Example::
+
+  r1 = Region()
+  r2 = Region()
+  r3 = Region()
+  with (r1, r2):
+    r1.f = r3    # OK, r3 becomes owned by r1
+    r2.f = r3    # Throws exception since r3 is already owned by r1
+
+    
 Region Isolation
-~~~~~~~~~~~~~~~~
+----------------
 
-Region isolation is enforced by runtime checking. A write to a field
-will raise an exception if the object stored in the field belongs to
-another region. The following code sketches how isolation could be
-implemented using ``__setattr__``::
+  **TODO:** References to implicit(R)
+
+A region is either **open** or **closed**. When created, a region
+is always closed. When a region is closed, its
+objects cannot be accessed by the program. To make the objects
+accessible, the region must be opened using a ``with`` block on its
+region object::
+
+  r = Region()     # creates new empty region object
+  ...              # r is closed
+  with r:
+    # r is open
+    r.f = object() # we can write to the region etc.
+  ...              # r is closed at with's end
+  print(r.f)       # will throw exception
+
+It is possible to open multiple regions in a single hit::
+
+  when (r1, r2):
+    ... # r1 and r2 are both open
+
+
+Enforcing Region Isolation
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  **TODO** Update code example with implicit(R).
+
+Region isolation is enforced by runtime checking. A write to a
+field will raise an exception if the object stored in the field
+belongs to another region (etc, see `assignment and ownership`_).
+The following code sketches how isolation could be implemented
+using ``__setattr__``::
   
    def __setattr__(self, attr_name, value):
      if region(self) == region(value) or \
@@ -196,231 +311,28 @@ implemented using ``__setattr__``::
        object.__setattr__(self, attr_name, value) # perform update!
      else:
        raise RegionIsolationError()
-
-
-Region Creation
-~~~~~~~~~~~~~~~
-
-Regions are created by creating a region object::
-  
-  r = Region("optional name")
-
-This creates a new (private) region which is empty except for the 
-region object itself. The optional name is used in messages in 
-exceptions for debugging purposes.
-
-To add an object in a region, we first open the region (see below), 
-allocate the object we want to add, and then store the object in a field 
-in the region object, or in a field of another object in the
-region. 
-
-
-Opening and Closing Regions
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Regions have two states: *open* and *closed*. Regions are closed
-upon creation. When a region is closed, its objects (and `nested
-regions`_) are not accessible to the program::
-  
-  r = Region("my region")
-  # r is now closed
-  x = r.field         # raises RegionIsolationError
-  r.field = object()  # -''-
-
-Regions are opened using the standard ``with`` construct::
-  
-  r = Region("my region")
-  # r is now closed
-  with r:
-    # r is now open
-    x = r.field         # OK, read r.field into stack variable x
-    r.field = object()  # OK, store new object in r.field
-  # r is now closed again
-
-**TODO** How should we guard against the following situation?
-
-  ::
-
-    r1 = Region("r1")
-    x = None
-    with r1:
-      r1.field = object()
-      x = r1.field
-    print(x)  # Accesses object inside closed region
-
-One possible solution is to perform a trivial escape analysis 
-on code at import time and insert a dynamic error where we 
-detect the leak, possibly guarded by a dynamic check. This will
-avoid false positives and only trigger an error when it actually
-occurs.
-
-
-The Current Region
-~~~~~~~~~~~~~~~~~~
-
-We refer to the most recently opened region as the *current*
-region. All allocations take place in the current region. The
-following code creates two regions, ``r1`` and ``r2`` and
-creates one object in each region::
-  
-  r1 = Region("r1")
-  r2 = Region("r2")
-  with r1:
-    o1 = object()   # Created in r1
-  with r2:
-    o2 = object()   # Created in r2
-
-In the drawing notation of above, this can be illustrated thus:
-
-.. image:: pep-9999/current_region_1.svg
-  :width: 250px
-  :alt: Creating two regions and allocating one object in each
-
-The following code snippet is equivalent to the one above::
-  
-  r1 = Region("r1")
-  r2 = Region("r2")
-  with r1:
-    o1 = object()    # Created in r1
-    with r2:
-      o2 = object()  # Created in r2
-
-The difference between the two last examples is that in the
-second, ``r1`` and ``r2`` are both open simultaneously on
-the line where ``o2`` is created. 
-
-A region can be opened multiple times, so the following code
-is legal::
-
-  with r1:
-    with r2:
-      with r1:
-        r1.field = object()
-
-.. image:: pep-9999/current_region_2.svg
-  :width: 250px
-  :alt: Adding an object to r1, and storing it in a field
-
-Note how storing the new object in ``r1.field`` creates a reference
-from the region object to the new object. Unless an object is reachable
-from the region object, it will become garbage once the region closes,
-since there can be no local variables that may reference it.
-
-(Note: there is no need to open a region multiple times but allowing
-it makes code more compositional.)
-
-.. _nested regions:
-.. _nested:
-
-Nesting Regions
-~~~~~~~~~~~~~~~
-
-Regions can be *nested* -- this happens automatically when an
-object in a region stores a region object. The following code
-creates a region with a list object whose elements are all
-region objects::
-
-  r1 = Region("r1")
-  with r1:
-    r1.field = [Region("r%d") % i for i in range(2,5)]
-
-If region ``r2`` is nested inside region ``r1``, we say that
-``r1`` is the (direct) parent of ``r2``. A region that is not
-nested inside another is called *independent*. All regions are
-created as independent.
-
-Only an independent region may be nested inside another region. 
-An attempt at nesting a region inside multiple regions will raise 
-a ``NestingException``::
-
-  r1 = Region("r1")
-  r2 = Region("r2")
-  r3 = Region("r3")
-  with r1:
-    r1.field1 = [r3]       # OK, nests r3 in r1
-  with r2:
-    r2.field2 = r3         # raises NestingException
-
-Note that a region may have multiple incoming references from its
-parent::
-
-  r1 = Region("r1")          # independent region
-  r2 = Region("r2")          # independent region
-  r3 = Region("r3")          # indepentent region
-  with r1:
-    r1.field1 = r2           # ok, nesting r2 in r1
-    r1.field2 = object()
-    r1.field2.field3 = r2    # ok, r2 already nested in r1
-
-Changing the nesting topology is possible by first detaching the
-region before the second nesting. Detaching a region makes it
-independent::
-  
-  ...
-  with r1:
-    r1.field1 = None
-    r1.field2.field3 = None  # detaches r2 from r1, r2 becomes independent
-  with r3:
-    r2.field2 = r3           # OK
-
-Python's swap semantics is supported if the number of incoming 
-references is 1::
-
-  ...
-  with r1:
-    with r2:
-      r1.field1, r2.field2 = r2.field2, r1.field1
-
-**Note:**
-An alternative design would restrict the number of incoming external
-references to a region to *one*. This would make it much easier to 
-change the topology. More experiments are needed to decide which is
-best.
-
-Opening a nested region is only permitted if its parent region is open.
-Thus, the following code leads to a ``NestingException``::
-
-  r1 = Region("r1")
-  r2 = Region("r2")
-  with r1:
-    r1.field = r2  # Nest r2 directly inside r1
-  with r2:         # raises a NestingException since r1 is closed
-    ...            # unreachable code
-      
     
-Merging Regions
-~~~~~~~~~~~~~~~
 
-A closed region can be *merged* into an open region::
-  
-  # r1 is an open region, r2 is closed
-  x = r2.merge(r1)
+Region-Wide Operations
+----------------------
 
-The code above *moves* all objects in ``r2`` into ``r1``. The
-variable ``x`` is a list (if necessary) of all the contents 
-of all variables in ``r2``. The list itself is allocated in r1.
+Merge
+  An operation that moves all objects in a region into another region.
 
-After merging, the ``r2`` region still exists but is empty --
-all its fields are ``None`` etc.
+Freeze
+  An operation that makes all objects in a region immutable.
 
-Merging a region is *shallow*, meaning that nested regions are
-unaffected.
-
-Merging from an open region or into a closed region raises a
-``MergeException``.
+Via the region object it is possible to operate on an entire region.
+We already saw some examples of that in `assignment and ownership`_.
 
 
 Freezing Regions
 ~~~~~~~~~~~~~~~~
 
-A region's entire contents can be turned `immutable`_ by
-*freezing* it::
-
-  x = r2.freeze()
-
-Freezing a region is *deep*, meaning that nested regions are also
-frozen. Freezing removes all frozen region objects from the
-frozen object graph. Consider the following code::
+A private closed region ``R`` can be frozen. This makes its
+owned objects immutable (and free), and ``R`` becomes empty.
+Freezing affects owned regions as well as their contained objects
+(i.e. it is deep)::
 
   r2 = Region("r2")
   r3 = Region("r3")
@@ -433,7 +345,7 @@ frozen object graph. Consider the following code::
 The resulting value in ``x`` is the list ``[47, 11]`` stored in
 ``r2``, with the frozen content of the nested region ``r3``
 as the second element. As a side-effect of the above, the region
-objects ``r2`` and ``r3`` become empty and independent.
+objects ``r2`` and ``r3`` become empty and free.
 
 Freezing an open region raises a ``FreezeException``.
 
@@ -449,57 +361,71 @@ of `PEP 351 <https://peps.python.org/pep-0351/>`_:
 - Freezing is in-place, not by copy
 
 
-.. _immutable:
+Merging Regions
+~~~~~~~~~~~~~~~
 
-Immutable Objects
------------------
+A region ``R`` can be merged into an open region
+``R'``. This changes the ownership of all objects in ``R`` from ``R`` to
+``R'``, and ``R`` becomes empty. Merging does affect directly nested
+regions by changing their ownership to the new region. It does not
+affect its containing objects or indirectly nested regions (i.e.
+it is shallow). Example::
 
-An immutable object's observable state cannot be changed.
-(Unobservable state such as its reference count can change.)
-An immutable object may only reference other immutable objects.
+  x = r2.merge(r1)
 
-All attempts to change an immutable object, e.g. a write to a
-field, will raise a ``ImmutabilityException``, and the object will
-be left unchanged.
+The code above *moves* all objects in ``r2`` into ``r1``. The
+variable ``x`` is a list (if necessary) of all the contents of all
+variables in ``r2``. The list itself is in the ``r1`` region.
 
-
-Shared Regions
---------------
-
-A shared region is a region that is only accessible from within 
-behaviours that have successfully acquired it, thereby making it 
-private. A shared region can be acquired by at most one behaviour 
-at a time.
-
-A shared region must be created from a private, `independent region`_ 
-(otherwise a ``SharingException`` is raised)::
-
-  c = Region("r1")  # create private, independent region
-  c.share()         # share the region
-
-On the inside of a behaviour, a shared region behaves like a private
-region.
-
-Shared regions can be freely stored in fields without creating a nesting
-relation between regions::
-
-  c = Region("r1").share()
-  r2 = Region("r2")
-  r3 = Region("r3")
-  with r2:
-    with r3:
-      r1.field = c  # OK
-      r2.field = c  # OK
-
-**TODO** Some helper function is needed to move the contents of an acquired
-shared region into a new region that can be used to swap the contents of 
-two regions, etc. For now, assume that it is possible to call a method
-``detach_all()`` on a shared region to create a new private region that 
-holds all the contents of the shared region, which becomes empty.
+After merging, the ``r2`` region still exists but is empty --
+all its fields are ``None`` etc.
 
 
-Behaviours
-----------
+Concurrency
+-----------
+
+So far, all regions we have discussed were private, meaning they
+were only accessible to the current behaviour (think: "thread of
+control"). To make a region accessible to multiple behaviours, it
+must first be explicitly turned into a shared region::
+
+  r = Region()
+  ...
+  r.make_sharable()   # placeholder syntax
+
+Only regions which are *free and closed* can be made shared.
+
+After a region has been made shared, its region object can be
+referenced freely from other regions. This can be interpreted as
+shared ownership. To coordinate accesses under shared ownership,
+we need an asynchronous version of the ``with`` construct, which we
+call ``when``. A ``when`` can operate on zero or more regions, which
+must all be shared::
+
+  r1 = Region()
+  r1.make_sharable()
+  r2 = Region()
+  r2.make_sharable()
+  when (r1, r2):
+    ... # r1 and r2 are open
+
+We can think of ``when`` as enforcing that ``r1`` and ``r2`` are
+effectively private inside the ``when`` block through a dynamic
+check. To emphasise the asynchronous nature of a ``when`` talk
+about a ``when`` block as **spawning** a **behaviour**. This
+language is meant to convey the dynamic creation of a behaviour
+which is registered in the runtime, and which is runnable once it
+has **acquired** (established exclusive access to) its shared
+region parameters. Thus, code that follows a behaviour (a ``when``
+block) may run concurrently with it::
+
+  r = Region()
+  when r:
+    print("A")
+  print("B")
+
+In the above example, the program may output both "AB" and "BA".
+See more under `ordering behaviours`_ below.
 
 A behaviour can be thought of as a task with a set of regions that must
 be acquired by the runtime before the task can run. A behaviour
@@ -510,25 +436,32 @@ We refer to behaviours whose regions are overlapping as *overlapping
 behaviours*. The runtime guarantees that overlapping behaviours are
 serialised.
 
-Behaviours are created (we say spawned) using a new syntactic construct
-called ``when``. The following code example spawns a behaviour that 
-must acquire the shared region ``c1`` to run (this is handled automatically 
-by the runtime)::
+  **TODO** What about capturing free regions?
 
-  when (c1):
-    ...
+Because a ``when`` can operate on any number of shared regions, it
+can be used to establish safe synchronous action to different
+state at different times (similar to grabbing different sets of
+locks, but without risking deadlocks, and with a guarantee that
+anything that can be accessed is actually protected by a lock that
+has been successfully acquired)::
 
-The following code spawns a behaviour that swaps the contents of two
-regions::
+  my_account = Region()
+  your_account = Region()
 
-  when (c1, c2):
-    r1, r2 = c1.detach_all(), c2.detach_all()
-    c2.field = c2.merge(r1)
-    c1.field = c1.merge(r2)
+  with (my_account, your_account):
+    my_account.balance = 100
+    your_account.balance = 0
+
+  my_account.make_sharable()
+  your_account.make_sharable()
+
+  # transfer money between two accounts
+  when (my_account, your_account) as (m, y):
+    m.balance, y.balance = y.balance, m.balance
 
 
 Ordering Behaviours
--------------------
+~~~~~~~~~~~~~~~~~~~
 
 The program order of spawns of overlapping behaviours controls the 
 happens-before relation between them. In the following example, 
@@ -579,23 +512,50 @@ behaviour. In the following case, *b2* may run before or after *b4*::
     when (c1): # b4
       ...
 
-Examples
-========
 
-TODO
+Making a Shared Region Private Again
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+  **TODO** Even more WIP!
+
+It is not possible to make a shared region private again. However, it is
+possible to spawn a behaviour that, once it has dynamically establised
+that is has exclusive access to the share region, moves all its contents
+to a private region.
+
+For now, assume that it is possible to call a method
+``detach_all()`` on a shared region to create a new private region
+that holds all the contents of the shared region, which becomes
+empty.
+
+The following code spawns a behaviour that swaps the contents of two
+regions::
+
+  when (c1, c2):
+    r1, r2 = c1.detach_all(), c2.detach_all()
+    c2.field = c2.merge(r1)
+    c1.field = c1.merge(r2)
+
+
+
+.. _immutable:
+
+Immutable Objects
+-----------------
+
+An immutable object's observable state cannot be changed.
+(Unobservable state such as its reference count can change.)
+An immutable object may only reference other immutable objects.
+
+All attempts to change an immutable object, e.g. a write to a
+field, will raise a ``ImmutabilityException``, and the object will
+be left unchanged.
 
 
 Glossary
 ========
 
-.. _independent region:
-
-independent region
-  A region that does not have a parent region.
-
-nested regions
-  The region *c* is nested inside the region *p* if an object
-  in *p* has a field that points to *c*, or if *p*'s root is *c*.  
+  **Probably out of date now.**
 
 .. _region:
 
@@ -657,6 +617,8 @@ acquire and release
   A behaviour implicitly acquires all regions in its region set before
   transitioning to the running state. The runtime ensures that
   acquisition is deadlock and livelock free.
+
+
 
 Open Questions
 ==============
