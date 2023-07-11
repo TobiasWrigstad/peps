@@ -143,7 +143,7 @@ Region object
 Implicitly created region
   A technical construct used under the hood to allow the creation of objects
   without an explicit owner. The idea is that an implicitly created region's
-  membership can be merged with another region changed based on data-flow.
+  membership can be merged with another region based on data-flow.
   (See `assignment and ownership`_.)
   
 Behaviour
