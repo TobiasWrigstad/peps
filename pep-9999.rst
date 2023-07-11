@@ -55,7 +55,7 @@ description then takes a bottom-up approach. It starts by defining
 regions and their reification in Python as region objects, and
 operations on region objects. It then distinguishes private and
 shared regions and introduces behaviours and how behaviours are
-exposed to Python programmers in form of the ``when`` language
+exposed to Python programmers in the form of the ``when`` language
 construct.
 
 
@@ -65,9 +65,9 @@ Rationale
 Behaviour-oriented Concurrency (BoC for short) is a concurrency
 model where programs are comprised of tasks that we call
 *behaviours*. A behaviour only has access to immutable objects,
-objects created inside the behaviour, and objects inside regions
-passed to the behaviour at the time of its creation, or regions
-it captures from its enclosing lexical scope.
+objects created inside the behaviour, objects inside regions
+passed to the behaviour at the time of its creation, and objects
+inside regions it captures from its enclosing lexical scope.
 
 A region is a set of mutable objects. We refer to the reified set
 as a *region object*. Regions do not overlap, so the intersection
@@ -141,9 +141,9 @@ Region object
   An object that reifies a region and permits manipulations of the entire region.
 
 Implicitly created region
-  A technical construct used under the hood to allow creation of objects
-  without an explicit owner. The idea is that an implicitly related region
-  membership will be changed to another region based on data-flow.
+  A technical construct used under the hood to allow the creation of objects
+  without an explicit owner. The idea is that an implicitly created region's
+  membership can be merged with another region changed based on data-flow.
   (See `assignment and ownership`_.)
   
 Behaviour
@@ -238,13 +238,13 @@ side-effects explained below.
 Let ``x`` and ``y`` be objects and ``R`` be a region object.
 Let ``region(x) == None`` mean that ``x`` is free.
 Let ``region(x) == R`` mean that ``x`` is owned by ``R``.
+Let ``regions(x,...,y)`` mean the set of regions, ``{ region(x), ..., region(y) }``.
 
 The assignment ``x.f = y`` is legal (with respect to ownership) iff:
 
-* ``region(x) == region(y) == None`` **(1)**, or
-* ``region(x) == region(y) != None``, or
-* ``region(x) == None`` and ``region(y) == R`` **(2)**, or
-* ``region(x) == R`` and ``region(y) == None`` **(2)**
+* ``regions(x,y) == { None }`` **(1)**, or
+* ``regions(x,y) == { R }``, or
+* ``regions(x,y) == { None, R }`` **(2)**
  
 The assignment ``R.f = y`` is legal (with respect to ownership) iff:
 
@@ -276,6 +276,16 @@ an exception. Example::
     r1.f = r3    # OK, r3 becomes owned by r1
     r2.f = r3    # Throws exception since r3 is already owned by r1
 
+Here is a more elaborate example that allows some implicit merging::
+
+  r1 = Region()
+  r2 = Region()
+  with (r1, r2):
+    o1 = object() # free object
+    o2 = object() # free object
+    o1.f = o2     # o1 and o2 are in the same implicit region
+    r1.f = o1     # o1 becomes owned by r1, as does o2
+    r2.f = o2     # Throws an exception as o2 is in r1
 
 **TODO** Check the following, and add implicit(R):
 
@@ -307,7 +317,7 @@ region object::
 
 It is possible to open multiple regions in a single hit::
 
-  when (r1, r2):
+  with (r1, r2):
     ... # r1 and r2 are both open
 
 
