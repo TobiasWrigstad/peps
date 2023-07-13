@@ -371,9 +371,9 @@ of `PEP 351 <https://peps.python.org/pep-0351/>`_:
 Merging Regions
 ~~~~~~~~~~~~~~~
 
-A region ``R`` can be merged into an open region
+A free region ``R`` can be merged into an open region
 ``R'``. This changes the ownership of all objects in ``R`` from ``R`` to
-``R'``, and ``R`` becomes empty. Merging does affect directly nested
+``R'``, and ``R`` becomes empty. Merging affects directly nested
 regions by changing their ownership to the new region. It does not
 affect its containing objects or indirectly nested regions (i.e.
 it is shallow). Example::
@@ -381,11 +381,11 @@ it is shallow). Example::
   x = r2.merge(r1)
 
 The code above *moves* all objects in ``r2`` into ``r1``. The
-variable ``x`` is a list (if necessary) of all the contents of all
-variables in ``r2``. The list itself is in the ``r1`` region.
+variable stores an object (owned by ``r1``) with a copy of all
+fields in ``r2``.
 
-After merging, the ``r2`` region still exists but is empty --
-all its fields are ``None`` etc.
+After merging, the ``r2`` region behaves as if it was an alias
+to ``r1``. 
 
 
 Concurrency
@@ -449,10 +449,10 @@ serialised.
 A behaviour can capture regions in the enclosing scope if they
 are free, private and closed::
 
-  region r = Region() # free, private and closed
+  r = Region()        # free, private and closed
   when ():            # immediately runnable
-    ...               # r is open
-
+    ... r ...         # r is accessible and closed
+    
 Because a ``when`` can operate on any number of shared regions, it
 can be used to establish safe synchronous action to different
 state at different times (similar to grabbing different sets of
