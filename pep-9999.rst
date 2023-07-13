@@ -443,15 +443,13 @@ We refer to behaviours whose regions are overlapping as *overlapping
 behaviours*. The runtime guarantees that overlapping behaviours are
 serialised.
 
-  **TODO** Is the following regarding capturing correct? Are
-  there delays? What happens with the captured variable?
-
 A behaviour can capture regions in the enclosing scope if they
 are free, private and closed::
 
   r = Region()        # free, private and closed
   when ():            # immediately runnable
     ... r ...         # r is accessible and closed
+  ...                 # opening r or aliases to r throw exception
     
 Because a ``when`` can operate on any number of shared regions, it
 can be used to establish safe synchronous action to different
