@@ -568,8 +568,20 @@ be left unchanged.
 Integration with Existing Python Code
 -------------------------------------
 
-**TODO** Really important to say something about this before
-Wednesday 12/7.
+**TODO**  This is WIP!
+
+The region system is designed to work well with existing code.
+If you don't use regions, then all the objects will be in implicit regions, and these regions
+will be combined as necessary, so no errors would be introduced.  This means existing python code
+that is passed objects from at most one explicit region will not introduce RegionIsolationExceptions.
+
+The concurrency model will require a GIL per scheduler thread for interaction with existing legacy code. 
+That is each scheduler thread would be a sub-interpreter.
+This could be relaxed in the future as more understanding is developed.
+
+Global and module level variables will be in a special global region.  This region will taint
+anything that it points to, to also be global.  This will be used to trap races on globals from multiple
+behaviours. 
 
 
 Glossary
