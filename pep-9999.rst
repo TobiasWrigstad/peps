@@ -492,7 +492,7 @@ behaviour *b1* is guaranteed to run before *b2* but not before *b3*::
 To ensure that *b3* does not run before *b1*, we can either introduce
 a temporary shared region to make them overlapping::
 
-  c4 = Region().share() # Empty region
+  c4 = Region().make_shareable() # Empty region
   when (c1, c2, c4):   # b1
     ... 
 
@@ -516,7 +516,7 @@ or we can spawn *b3* at the end of *b1*::
 Note that program order refers to order of execution in a single 
 behaviour. In the following case, *b2* may run before or after *b4*::
 
-  c = Region("r").share()
+  c = Region("r").make_shareable()
   when ():     # b1
     when (c1): # b2
       ...
