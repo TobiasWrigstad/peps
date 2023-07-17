@@ -90,7 +90,8 @@ Accessing the contents of a region requires *opening* the region.
 A private region can be opened synchronously. A shared region can
 only be opened asynchronously by spawning a behaviour. The runtime
 ensures that behaviours that open the same region never run at the
-same time. 
+same time. Note that this means that accessing a nested region 
+requries opening its parent region first.
 
 Unlike e.g. a finish/async model, behaviours do not return values
 or join at a particular program point. Such a model encourages a
@@ -256,7 +257,7 @@ The assignment ``x.f = R`` is legal (with respect to ownership) iff:
 * ``R`` is a shared region, or
 * ``region(x) == R``, or
 * ``region(x) == None`` **(2)**, or
-* ``region(x) == R'`` and ``R`` is owned by ``R'``, or
+* ``region(x) == R'`` and ``R`` is owned by ``R'`` (aka nested in ``R'``), or
 * ``region(x) == R'`` and ``R`` is free **(3)**
 
   
@@ -319,6 +320,10 @@ It is possible to open multiple regions in a single hit::
 
   with (r1, r2):
     ... # r1 and r2 are both open
+
+As a consequence of this design, if region ``r2`` is nested in
+region ``r1``, in order to access and open ``r2``, one first
+must open ``r1``.
 
 
 Region-Wide Operations
