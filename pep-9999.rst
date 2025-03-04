@@ -355,7 +355,7 @@ Future Extensions
 
 This PEP is the first in a series of PEPs with the goal of delivering
 a Data-Race Free Python that is theoretically compatible with, but 
-notably not contigent on, `PEP 703 <TODO>`_ -- despite delivering 
+notably not contigent on, `PEP 703`_ -- despite delivering 
 multicore performance in Python.
 
 This work will take place in the following discrete steps:
@@ -384,7 +384,7 @@ requires atomic increments and decrements. Note that since we are only
 planning to share immutable objects across different GIL's, it is
 *not* possible for two threads to read--write or write--write race
 on a single field. Thus we only need to protect the reference counter
-manipulations, avoiding most of the complexity of `PEP 703 <https://peps.python.org/pep-0703/>`_
+manipulations, avoiding most of the complexity of `PEP 703`_
 
 
 Simplified Garbage Collection for Immutable Object Graphs
@@ -435,7 +435,7 @@ share *mutable* state, although only one subinterpreter at a time
 will be able to access (read or write) to that state. In theory,
 this work could also be authored on-top of free-theaded Python (PEP 703).
 
-Data-Race Free Python is different from `PEP 703 <https://peps.python.org/pep-0703/>`_ which
+Data-Race Free Python is different from `PEP 703`_ which
 aims to make the CPython run-time resilient such that it does
 not crash if a Python program contains data-races. As is evident
 from the work on this PEP, considerable complexity is necessary
@@ -456,7 +456,9 @@ Reference Implementation
 References
 ==========
 
-* `PEP 703: Making the Global Interpreter Lock Optional in CPython <https://peps.python.org/pep-0703/>`_
+* `PEP 703`_
 * `PEP 351: The freeze protocol <https://peps.python.org/pep-0351/>`_
 * https://peps.python.org/pep-0734/
 * https://peps.python.org/pep-0683/
+
+.. _PEP 703: https://peps.python.org/pep-0703
