@@ -17,7 +17,7 @@ Abstract
 
 This PEP proposes adding a mechanism for deep immutability to
 Python via a new builtin function ``freeze(obj)``. This function
-takes a reference to an object and recursively render the object
+takes a reference to an object and recursively renders the object
 and all objects it references immutable. (This is *deep*
 immutability --- just making the first object immutable is called
 *shallow* immutability.)
@@ -26,11 +26,7 @@ Deep immutability will provide stronger guarantees against
 unintended modifications, improving correctness, security, and
 parallel execution safety.
 
-In many respects, this proposal can be thought of as an
-extension of `PEP 683 --- Immortal Objects <https://peps.python.org/pep-0683/>`_
-most importantly including run-time checks that guarantee that
-an immutable object does not change, and with the key difference
-that it permits reference counts to change! In this PEP, we rely
+In this PEP, we rely
 on the GIL to ensure the correctness of reference counts of 
 immutable objects, but we have several planned memory management 
 extensions.
@@ -95,12 +91,10 @@ compilation techniques (specialising for immutable data, e.g.
 fixed shape, fewer barriers, inlining, etc.). Freezing objects can
 allow Python to implement more efficient caching mechanisms and
 enable compiler optimisations that rely on immutability
-assumptions.
+assumptions. This PEP will permit such opportunities to go
+beyond today's immutable objects (like ``int``, ``string``) and
+shallow immutable objects (``tuple``, ``frozenset``).
 
-
-Note that none of the above are *guaranteed* with immortal
-objects as these may still change if a program manipulates an
-object without knowing that it is immortal.
 
 
 Specification
@@ -154,7 +148,8 @@ cycle detector, types defined through C code will support immutability
 
 C extensions that perform writes to data which can be made immutable
 should add the ``Py_CHECKWRITE`` macro shown above on all paths in the
-code that lead to writes to that data.
+code that lead to writes to that data. If C extensions manage their
+data through Python dictionary objects, no changes are needed.
 
 **TODO**
   If we don't have a way to tell whether or not an extension 
@@ -165,6 +160,9 @@ We are discussing adding a ``__freeze__`` hook that will be called
 after an object has been made immutable. This hook could then be used 
 to freeze or otherwise manage any other state on the side that is
 introduced through a C-extension.
+
+	@MattJ: Something about adding a dummy node to the object graph
+	that the freeze function finds.
 
 
 Freezing Type Which are Not Immutability-Aware
@@ -222,7 +220,7 @@ Default (Im)Mutabiliy
 
 - TODO: describe what classes create immutable objects
 
-- Strings, numbers, and tuples of immutable objects create immutable
+- (Interned) strings, numbers, and tuples of immutable objects create immutable
   objects by default
 
 
@@ -289,19 +287,22 @@ permitted to create a subclass of an immutable type.
 Because this reference is "accidental" and does not
 get exposed to the programmer in any dangerous way,
 we permit frozen classes to be subclassed (by mutable
-classes).
+classes). C.f. `Sharing Immutable Data Across Subinterpreters`_.
 
 
 Implementation Details
 ======================
 
-1. Introduce an ``is_immutable`` flag in PyObject to indicate whether an
-   object is frozen.
+1. Introduce an ``is_immutable`` flag on objects to capture whether or
+   not they are frozen. The status is accessible through ``_Py_ISIMMUTABLE``
+	in the C API and in Python code through the ``isimmutable`` builtin.
 2. Modify object mutation operations (``PyObject_SetAttr``,
    ``PyDict_SetItem``, ``PyList_SetItem``, etc.) to check the 
    flag and raise an error when appropriate.
 3. Implement ``freeze(obj)``, ensuring it traverses object references
    safely, including cycle detection.
+
+**TODO** Do we need the ``freezeglobals()``?
 
 
 Backward Compatibility
@@ -315,8 +316,10 @@ Frozen objects will raise errors only when mutation is attempted.
 Performance Implications
 ========================
 
-**TODO** The cost of checking for immutability violations is
-an extra dereference of ...
+The cost of checking for immutability violations is
+an extra dereference of checking the flag on writes.
+There are implementation-specific issues, such as
+various changes based on how and where the bit is stolen.
 
 
 Alternatives Considered
@@ -330,7 +333,8 @@ Alternatives Considered
    sharing immutable objects across subinterpreters (see extensions).
 2. Copy-on-Write Immutability: Instead of raising errors on
    mutation, create a modified copy. However, this changes object
-   identity semantics and is less predictable.
+   identity semantics and is less predictable. Support for copy-on-write
+   may be added later, if a suitable design can be found.
 3. Immutable Subclasses: Introduce ImmutableDict, ImmutableList,
    etc., instead of freezing existing objects. However, this does
    not generalize well to arbitrary objects and adds considerable
@@ -420,7 +424,18 @@ objects are transmitted across subinterpreters.
 
 This change will require reference counts to be atomic (as
 discussed above) and the subclass list of a type object to
-be made thread-safe.
+be made thread-safe. Additionally, we will need to change
+the API for getting a class' subclasses in order to avoid
+data races.
+
+This change requires modules loaded in one subinterpreter to be
+accessible from another. Implementation details here are to be
+discussed, but the version we have been working on is one in which
+a side effect of calling ``freezeglobals()`` is that all
+subsequent module imports are imported into the main
+module and immediately frozen and shared across all subinterpreters.
+
+**TODO** Sync the above with the discussion about freezeglobals.
 
 
 Data-Race Free Python
@@ -450,7 +465,7 @@ can safely assume that data-races will not happen, even if we
 Reference Implementation
 ========================
 
-**TODO!** `Phase1 <https://github.com/mjp41/cpython/tree/phase1>`_
+`Available here <https://github.com/mjp41/cpython/pull/51>`.
 
 
 References
