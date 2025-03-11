@@ -237,10 +237,10 @@ Examples of Uses of CHECKWRITE
 
 Inspiration and examples can be found by looking at existing
 uses of ``Py_CHECKWRITE`` in the CPython codebase. Two good
-starting places are ```object.c`_`` and ```dictobject.c`_``.
+starting places are ``object.c`` `[1]`_ and ``dictobject.c`` `[2]`_.
 
-.. _object.c: https://github.com/mjp41/cpython/pull/51/files#diff-ba56d44ce0dd731d979970b966fde9d8dd15d12a82f727a052a8ad48d4a49363
-.. _dictobject.c: https://github.com/mjp41/cpython/pull/51/files#diff-b08a47ddc5bc20b2e99ac2e5aa199ca24a56b994e7bc64e918513356088c20ae
+.. _[1]: https://github.com/mjp41/cpython/pull/51/files#diff-ba56d44ce0dd731d979970b966fde9d8dd15d12a82f727a052a8ad48d4a49363
+.. _[2]: https://github.com/mjp41/cpython/pull/51/files#diff-b08a47ddc5bc20b2e99ac2e5aa199ca24a56b994e7bc64e918513356088c20ae
 
 Deep Freezing Semantics
 -----------------------
@@ -304,17 +304,17 @@ that its type becomes frozen too. Consider the following program,
 which is not legal in this PEP because it modifies the type of an
 immutable object:
 
-.. code-block:: c
+.. code-block:: python
 
 	class Counter:
-	  def __init__(self, initial_value):
-	    self.value = initial_value
-	  def inc(self):
-	    self.value += 1
-	  def dec(self):
-	    self.value -= 1
-	  def get(self):
-	    return self.value
+		def __init__(self, initial_value):
+			self.value = initial_value
+		def inc(self):
+			self.value += 1
+		def dec(self):
+			self.value -= 1
+		def get(self):
+			return self.value
 
 	c = Counter(0)
 	c.get() # returns 0 
@@ -361,11 +361,13 @@ Function objects can be thought of as regular objects whose
 fields are its local variables -- some of which may be captured
 from enclosing scopes.
 
-Consider the following scenario:: python-code
+Consider the following scenario:
+
+.. code-block:: python
 
 	x = 0
 	def foo():
-        return x
+		return x
 
 	freeze(foo)
 	... # some code, e.g. pass foo to another thread
@@ -396,16 +398,16 @@ permissive.
 
 Now consider freezing the following function:
 
-.. code-block:: python-code
+.. code-block:: python
 
 	x = 0
 	def foo(a = False):
 		if a:
-			x = x + 1
-			return x
-		else:
 			a = a + 1
 			return a
+		else:
+			x = x + 1
+			return x
 
 	freeze(foo)
 	foo(41)  # OK, returns 42
