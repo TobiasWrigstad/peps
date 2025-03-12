@@ -625,3 +625,22 @@ References
 * `PEP 683: Immortal Objects, Using a Fixed Refcount <https://peps.python.org/pep-0683/>`_
 
 .. _PEP 703: https://peps.python.org/pep-0703
+
+
+Test
+====
+
+Consider the following code:
+
+.. code-block:: python
+
+	class Foo: pass
+	x = Foo()
+	x.f = 42
+
+This gives rise to the following object graph:
+
+.. image:: pep-9999/freeze1.svg
+   :width: 66%
+
+Calling ``freeze(x)`` will freeze **all** of these objects.
