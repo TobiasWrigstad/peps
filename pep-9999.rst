@@ -102,7 +102,13 @@ race. To ensure `container thread-safety
 PEP 703 proposes per-object locks instead. If ``pair`` was
 frozen, the deletion would have caused an error.
 
-	TODO: draw picture
+The following image illustrates that as soon as an object *a*
+is reachable from two threads, then all other objects that
+*a* can reach are reachable too. In the code example above,
+``pair`` is *a* and ``list`` is *b*.
+
+.. image:: pep-9999/sharing1.png
+   :width: 50%
 
 See also the discussion about extensions further down in this
 document.
@@ -265,6 +271,37 @@ The ``freeze(obj)`` builtin works as follows:
       base classes).
 
 5. Attempting to mutate a frozen object raises an exception (``NotWriteableError``).
+
+
+Illustration of the Deep Freezing Semantics
+-------------------------------------------
+
+Consider the following code:
+
+.. code-block:: python
+
+	class Foo: pass
+	x = Foo()
+	x.f = 42
+
+If we glance over some implementation details such as the classes of strings and ints being
+implemented in C, and the naming of fields (the ``__metaclass__`` fields are named ``__class__`` etc.), 
+the code above gives rise to the following object graph:
+
+.. image:: pep-9999/freeze1.svg
+   :width: 66%
+
+The ``Foo`` instance pointed to by ``x`` consists of several objects: its fields are stored in a 
+dictionary object, and the assignment ``x.f = 42`` adds two objects to the dictionary in the form
+of a string key ``"f"`` and its associated value ``42``. These objects each have a class pointers
+pointing to the ``string`` and ``int`` classes respectively. Similarly, the ``foo`` instance has
+a pointer to the ``Foo`` class. Finally, all these classes have a pointer to the same meta class
+object.
+
+Calling ``freeze(x)`` will freeze **all** of these objects.
+
+(Note that in this particular case, both ``"f"`` and ``42`` will be frozen already, see
+default immutability below.)
 
 
 Default (Im)Mutabiliy 
@@ -626,21 +663,3 @@ References
 
 .. _PEP 703: https://peps.python.org/pep-0703
 
-
-Test
-====
-
-Consider the following code:
-
-.. code-block:: python
-
-	class Foo: pass
-	x = Foo()
-	x.f = 42
-
-This gives rise to the following object graph:
-
-.. image:: pep-9999/freeze1.svg
-   :width: 66%
-
-Calling ``freeze(x)`` will freeze **all** of these objects.
