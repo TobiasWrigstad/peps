@@ -104,8 +104,12 @@ frozen, the deletion would have caused an error.
 
 The following image illustrates that as soon as an object *a*
 is reachable by two threads, then all other objects that
-*a* can reach are also reachable by both threads. In the code example above,
-``pair`` is *a* and ``list`` is *b*.
+*a* can reach are also reachable by both threads. The dashed
+red references to *c* and *d* are not possible because then
+*c* and *d* would not be in areas where only a single thread
+could reach them.
+
+To map the code example above to the figure -- ``pair`` is *a* and ``list`` is *b*.
 
 .. image:: pep-9999/sharing1.png
    :width: 50%
