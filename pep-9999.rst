@@ -103,8 +103,8 @@ PEP 703 proposes per-object locks instead. If ``pair`` was
 frozen, the deletion would have caused an error.
 
 The following image illustrates that as soon as an object *a*
-is reachable from two threads, then all other objects that
-*a* can reach are reachable too. In the code example above,
+is reachable by two threads, then all other objects that
+*a* can reach are also reachable by both threads. In the code example above,
 ``pair`` is *a* and ``list`` is *b*.
 
 .. image:: pep-9999/sharing1.png
