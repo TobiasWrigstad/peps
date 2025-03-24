@@ -31,12 +31,12 @@ With the move to free-threaded Python, the challenges of concurrency are coming 
 The race conditions that are common in concurrent programming are hard to debug, and requiring different tooling than what is commonly used in Python.
 We believe there is an opportunity to build a new concurrency model for Python based on "regions" and "deep immutability".
 The goal is to provide a model that is easy to use and flexible, so existing Python programs can be easily ported to multi-threading.
+The model allows for safe sharing of data between threads (in free-threaded Python) and sub-interpreters.
 
 Free-threaded Python enables the use of multiple threads with a single interpreter, but underlying sequential assumptions of the code on top of the interpreter
 are not valid anymore. This adds new classes of potential bugs to Python programs.
 By building fearless concurrency into Python, those sequential assumptions can be enforced at the language level, while
 still permitting true multi-threading.
-The model allows for safe sharing of data between threads (in free-threaded Python) and sub-interpreters.
 
 The presentation is based on the ideas presented in the PLDI'25 paper: (link to be added).   
 
