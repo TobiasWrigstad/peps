@@ -16,8 +16,10 @@ Fearless Concurrency in Python
 We want to discuss a dynamically checked ownership model for Python and a "fearless" concurrency model that it enables.
 The ownership model is based on "regions" and "deep immutability" and allows existing Python data structures to be used in multi-threaded programs.
 
-The presentation will be based on the ideas presented in the PLDI'25 paper (link to be added)
-and prototyping work done on a fork of the CPyton interpreter.
+The presentation will be based on collaboration with the Faster CPython team at Microsoft and
+prototyping work done on a fork of the CPython interpreter.
+The initial design is documented in a research paper that is conditionally accepted to appear at the ACM PLDI'25 conference.
+[Note that the paper is not yet public, but will be available by the time of the Language Summit.]
 
 The aim of the presentation is to get feedback on the ideas, and to discuss the implications of the model for Python.
 Getting something like this into Python would be a big change, and we want to discuss this with the core developers.
@@ -38,5 +40,4 @@ are not valid anymore. This adds new classes of potential bugs to Python program
 By building fearless concurrency into Python, those sequential assumptions can be enforced at the language level, while
 still permitting true multi-threading.
 
-The presentation is based on the ideas presented in the PLDI'25 paper: (link to be added).   
-
+The presentation is based on the ideas presented in a research paper in the ACM PLDI'25 conference: (link to be once available).
