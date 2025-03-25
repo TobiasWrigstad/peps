@@ -13,7 +13,7 @@ Fearless Concurrency in Python
 > *What is the "thing" you want to discuss in front of mostly Python core developers? What decision to be made? What are your questions, and proposed solutions? This should fit in 10 minutes, to allow for 20 minutes of discussion. Therefore this should be very focused. This field will only be read by Language Summit co-chairs to determine the talk acceptance. You can include a rough outline, useful links, sample discussions, etc.*
 
 
-We want to discuss a dynamically checked ownership model for Python and a "fearless" concurrency model that it enables.
+We want to discuss a dynamically checked ownership model for Python objects and a "fearless" concurrency model that it enables.
 The ownership model is based on "regions" and "deep immutability" and allows existing Python data structures to be used in multi-threaded programs.
 
 The presentation will be based on collaboration with the Faster CPython team at Microsoft and
