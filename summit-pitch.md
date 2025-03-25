@@ -30,7 +30,7 @@ We will also discuss how the model can be implemented in CPython, and what chang
 *This will be shown in the Language Summit schedule on the conference website and published ahead of the event. Write one or two short paragraphs to pitch this topic to the attendees. This is your chance to encourage people to discuss the topic with you!*
 
 With the move to free-threaded Python, the challenges of concurrency are coming to Python developers.
-The race conditions that are common in concurrent programming are hard to debug, and requiring different tooling than what is commonly used in Python.
+The race conditions that are common in concurrent programming are hard to debug, and require different tooling than what is commonly used in Python.
 We believe there is an opportunity to build a new concurrency model for Python based on "regions" and "deep immutability".
 The goal is to provide a model that is easy to use and flexible, so existing Python programs can be easily ported to multi-threading.
 The model allows for safe sharing of data between threads (in free-threaded Python) and sub-interpreters.
