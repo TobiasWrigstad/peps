@@ -22,7 +22,7 @@ The initial design is documented in a research paper that is conditionally accep
 [Note that the paper is not yet public, but will be available by the time of the Language Summit.]
 
 The aim of the presentation is to get feedback on the ideas, and to discuss the implications of the model for Python.
-Getting something like this into Python would be a big change, and we want to discuss this with the core developers.
+We also want to discuss with the core developers the possibility of getting this into CPython itself.
 We will also discuss how the model can be implemented in CPython, and what changes would be needed to the language and runtime to support it.
 
 
