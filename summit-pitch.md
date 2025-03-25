@@ -23,7 +23,7 @@ The initial design is documented in a research paper that is conditionally accep
 
 The aim of the presentation is to get feedback on the ideas, and to discuss the implications of the model for Python.
 We also want to discuss with the core developers the possibility of getting this into CPython itself.
-We will also discuss how the model can be implemented in CPython, and what changes would be needed to the language and runtime to support it.
+We will also describe how the model can be implemented in CPython, and what changes would be needed to the language and runtime to support it.
 
 
 ## The public pitch
