@@ -7,7 +7,7 @@ Status: Draft
 Type: Standards Track
 Content-Type: text/x-rst
 Created: 27-Feb-2025
-Python-Version: 3.12
+Python-Version: 3.15
 Post-History: 
 Resolution:
 
@@ -20,34 +20,38 @@ Python via a new builtin called ``freeze(obj)``. This builtin
 takes a reference to an object and recursively renders the object
 and all objects it references immutable. (This is *deep*
 immutability --- just making the first object immutable is called
-*shallow* immutability.)
+*shallow* immutability.) A convenience function
+``is_immutable(obj)`` is added to the ``sys`` module and returns
+true if an object is immutable.
 
-Deep immutability will provide stronger guarantees against
+Deep immutability provides strong guarantees against
 unintended modifications, improving correctness, security, and
 parallel execution safety.
 
 In this PEP, we rely
 on the GIL to ensure the correctness of reference counts of 
 immutable objects, but we have several planned memory management 
-extensions.
+extensions, including support for atomic reference counting on
+immutable objects.
 
 Immutability in action:
 
 .. code-block:: python
 
-	class Foo: pass
+  class Foo:
+      pass
 
-	f = Foo()
-	g = Foo()
-	h = Foo()
+  f = Foo()
+  g = Foo()
+  h = Foo()
 
-	f.f = g
-	g.f = h
-	h.f = g # cycles are OK!
+  f.f = g
+  g.f = h
+  h.f = g # cycles are OK!
 
-	g.x = "African Swallow" # OK
-	freeze(f) # Makes, f, g and h immutable
-	g.x = "European Swallow" # Throws immutability exception
+  g.x = "African Swallow" # OK
+  freeze(f) # Makes, f, g and h immutable
+  g.x = "European Swallow" # Throws immutability exception
 
 
 Motivation
@@ -82,15 +86,15 @@ Consider the following code:
 
 .. code-block:: python
 
-	import threading
+  import threading
 
-	data = [1, 2, 4, 8]
-	length = len(data)
-	pair = (data, length)
+  data = [1, 2, 4, 8]
+  length = len(data)
+  pair = (data, length)
 
-	threading.Thread(target=print, args=(pair,)).start()
+  threading.Thread(target=print, args=(pair,)).start()
 
-	del data[2]
+  del data[2]
 
 The shallow immutability of the ``pair`` tuple prevents the
 ``data`` list from being swapped for another list, but the
@@ -139,6 +143,13 @@ beyond today's immutable objects (like ``int``, ``string``) and
 Specification
 =============
 
+Note: our current prototype implementation was authored on-top of
+Python 3.12. To avoid blocking on rebasing on 3.14 to force
+decisions about changes to implementation detail, we are
+circulating this document to discuss the language design ideas,
+and some of the unaffected aspects of the implementation.
+
+
 Changes to Python objects
 -------------------------
 
@@ -163,87 +174,148 @@ A typical use of this check looks like this:
 
 .. code-block:: c
 
-	if (!Py_CHECKWRITE(op)) {        // perform the check
-	    PyErr_WriteToImmutable(op);  // raise the error if the check fails
-	    return NULL;                 // abort the write
-	}  
-	... // code that performs the write
+  if (!Py_CHECKWRITE(op)) {        // perform the check
+      PyErr_WriteToImmutable(op);  // raise the error if the check fails
+      return NULL;                 // abort the write
+  }  
+  ... // code that performs the write
 
 
-As writes are common but lack a common path that most writes to through
-the PEP requires a ``Py_CHECKWRITE`` call, there are several places in
-the CPython code base that are changed as a consequence of this PEP.
-So far we have identified around 70 writes spread across a dozen files.
+Writes are common in the CPython code base and the writes lack a
+common "code path" that they pass. To this end, the PEP requires a
+``Py_CHECKWRITE`` call to be inserted and there are several places
+in the CPython code base that are changed as a consequence of this
+PEP. So far we have identified around 70 writes spread across a
+dozen files. **TODO: update this number**
+
+
+Backward Compatibility
+======================
+
+This proposal is fully backward-compatible, as no existing Python
+code will be affected unless it explicitly calls ``freeze(obj)``.
+Frozen objects will raise errors only when mutation is attempted.
+
+
+Opt-In vs. Opt-Out
+------------------
+
+All pure Python objects can be frozen. However, for types which
+are partially or completely implemented in C, support for
+immutability requires some work on both exposing objects to
+freezing, and to enforce immutability in mutating C-functions.
+
+From a backwards compatibility perspective, an opt-in model keeps
+things simple: all existing code keeps working, and only code that
+wishes to support immutability needs updating. The downside of the
+opt-in model is that a large part of all Python libraries cannot
+be (even nominally) frozen.
+
+We choose to make support immutability opt-in. **TODO: description
+how that is done.**
+
+Note that it is possible to mix modules and types that support
+immutability with those that do not, as long as this does not
+breaks strictness.
+
+
+Strictness
+----------
+
+A strict interpretation of deep immutability does not permit an
+immutable object to reference a mutable object. This model is both
+easy to explain and understand, and an object's immutability can
+be "trusted" --- it is not possible for an immutable object to
+change through some nested mutable state [#RC]_. At the same time
+it limits the utility of freezing as many Python objects contain
+types outside of the standard library defined in C, which must
+opt-in immutability before they can be frozen.
+
+We choose to make immutability strict.
+
+
+
+Dealing with Failure
+--------------------
+
+Regardless whether support for freezing is opt-in or opt-out some
+types will not be freezable. This raises the question how to handle
+failure to freeze an object graph. Consider the object graph
+``o1 --> o2 --> o3`` where ``o1`` and ``o3`` can be frozen, but
+``o2`` cannot. What are the possible behaviours of ``freeze(o1)``?
+
+1. Freeze fails completely. In the strict interpretation of deep
+   immutability, freezing ``o1`` is not possible because ``o1``
+   contains a reference to an un-freezable object ``o2``. In this
+   scenario, the object graph ``o1 --> o2 --> o3`` remains mutable
+   and ``freeze(o1)`` raises an exception.
+2. **Rejected alternative**: Freeze succeeds by altering the
+   graph. In this example removing ``o2`` from the graph or
+   swapping out ``o2`` for a placeholder object to be able to
+   freeze the graph. This alternative becomes complicated both to
+   reason about from a user's perspective, and to implement, when
+   ``o2`` is referenced multiple times.
+3. **Rejected alternative**: Freeze fails partially. If we permit
+   non-strict deep immutability, we could either stop freezing
+   when we hit ``o2`` or possibly continue and freeze ``o3`` but
+   leave ``o2`` mutable. A downside of this alternative is that
+   immutable objects are no longer safe to share across threads
+   and may still change.
+4. **Rejected alternative**: Permit the user to choose between
+   alternatives 1) and 3) at use-site. In this case, the
+   ``freeze`` builtin takes an optional 2nd argument ``strict``
+   which must either be ``True`` or ``False``. In the first case,
+   ``freeze`` behaves as in alternative 1), in the second case,
+   it behaves as in alternative 2). We could further track whether
+   an object is strictly immutable or not in order to prevent
+   non-strictly immutable objects to participate in operations
+   which require strictness. This adds additional complexity to
+   the implementation, and also for the user.
+   
+We choose alternative 1, where freezing either succeeds or fails
+completely.
 
 
 New Obligations on C Extensions
 -------------------------------
 
+Due to the opt-in decision, there are no obligations for C
+extensions unless they want to add support for immutability. To
+support immutability a class must **TODO**. Depending on how state
+is kept and modified, additional changes are needed:
+
 Because our implementation builds on information available to the CPython
 cycle detector, types defined through C code will support immutability 
 "out of the box" as long as they use Python standard types to store
-data.
+data and uses the built-in functions of these types to modify the data.
 
-C extensions with functions that directly writes to data which can be made
-immutable should add the ``Py_CHECKWRITE`` macro shown above on all paths in the
-code that lead to writes to that data. If C extensions manage their
-data through Python dictionary objects, no changes are needed.
+To opt-in support for immutability, C extensions with functions
+that directly write to data which can be made immutable should add
+the ``Py_CHECKWRITE`` macro shown above on all paths in the code
+that lead to writes to that data. Notably, if C extensions manage
+their data through Python dictionary objects, no changes are
+needed.
 
-Python objects may define a ``__freeze__`` method which will be called 
-after an object has been made immutable. This hook could then be used 
-to freeze or otherwise manage any other state on the side that is
-introduced through a C-extension.
+Python objects may define a ``__freeze__`` method which will be
+called **after** an object has been made immutable. This hook
+could then be used to freeze or otherwise manage any other state
+on the side that is introduced through a C-extension.
 
-C extensions that define data that is outside of the heap traced by the
-CPython cycle detector should either manually implement freezing by using
-``Py_CHECKWRITE`` and the ``__freeze__`` hook, or alternatively ensure
-that all accesses to this data is *thread-safe*.
-
-
-Freezing Type Which are Not Immutability-Aware
-----------------------------------------------
-
-**TODO** Solicit feedback from extension authors.
-
-We could take a conservative stance and require that any C extension
-that defines a type must explicitly opt-in to declare support for
-immutability. Furthermore, we might interpret freezing strictly and
-have freeze fail if freezing encounters a type that does not support
-immutability. This gives us a "sound model" where a successful freeze
-call results in deep immutability that can be trusted (modulo bugs in
-the C extensions). The obvious downside is more work for the Python
-community in order to leverage deep immutability.
-
-That model can be relaxed by permitting strict and lax versions of
-freeze to co-exist. For example if strict freezing is the default,
-``freeze(o)`` will fail if ``o`` reaches a type ``T`` which does not support
-freezing, whereas ``freeze(o, strict=False)`` would permit the resulting
-object structure, which can still be mutated in ``T``.
-
-Making strict false by default is additionally permissive, and still
-allows programmers to opt-in to strict freezing when they so wish.
-
-If freezing can fail to freeze an object we must decide whether to:
-
-1. Abort and throw an exception
-2. Leave it and live with the unsoundness
-3. Nullify the reference to the non immutability-aware object 
-4. ...something else
-
-While alternative 3 will ensure that frozen objects are truly
-immutable, it has the ugly side-effect that making something
-immutable can mutate the heap. This seems to violate the "principle
-of least surprise".
-
-If freezing can be aborted, we also need to take a decision on in what
-state we leave the system. Do we leave some structures *partially*
-frozen? If we don't want that (which we probably don't), we need to
-save a log of things to unfreeze in case of an error. This will add
-to the cost of freezing things.
+C extensions that define data that is outside of the heap traced
+by the CPython cycle detector should either manually implement
+freezing by using ``Py_CHECKWRITE`` and the ``__freeze__`` hook,
+or at least ensure that all accesses to this data is
+*thread-safe*. There are cases where strict adherence to
+immutability is undesirable (as exemplified by our mutable
+reference counts), but ideally, it should not be able to directly
+observe these effects. (For example, taking the reference count of
+an immutable object is not supported to prevent code from
+branching on a value that can change non-deterministically by
+actions taken in parallel threads.)
 
 
 Examples of Uses of CHECKWRITE
-------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Inspiration and examples can be found by looking at existing
 uses of ``Py_CHECKWRITE`` in the CPython codebase. Two good
@@ -253,9 +325,10 @@ starting places are ``object.c`` `[1]`_ and ``dictobject.c`` `[2]`_.
 .. _[2]: https://github.com/mjp41/cpython/pull/51/files#diff-b08a47ddc5bc20b2e99ac2e5aa199ca24a56b994e7bc64e918513356088c20ae
 
 Deep Freezing Semantics
------------------------
+=======================
 
-The ``freeze(obj)`` builtin works as follows:
+Following the outcomes of the design decisions discussed just
+above, the ``freeze(obj)`` builtin works as follows:
 
 1. It recursively marks ``obj`` and all objects reachable from ``obj``
    immutable.
@@ -284,9 +357,11 @@ Consider the following code:
 
 .. code-block:: python
 
-	class Foo: pass
-	x = Foo()
-	x.f = 42
+  class Foo:
+      pass
+  
+  x = Foo()
+  x.f = 42
 
 If we glance over some implementation details such as the classes of strings and ints being
 implemented in C, and the naming of fields (the ``__metaclass__`` fields are named ``__class__`` etc.), 
@@ -347,22 +422,22 @@ immutable object:
 
 .. code-block:: python
 
-	class Counter:
-		def __init__(self, initial_value):
-			self.value = initial_value
-		def inc(self):
-			self.value += 1
-		def dec(self):
-			self.value -= 1
-		def get(self):
-			return self.value
+  class Counter:
+      def __init__(self, initial_value):
+          self.value = initial_value
+      def inc(self):
+          self.value += 1
+      def dec(self):
+          self.value -= 1
+      def get(self):
+          return self.value
 
-	c = Counter(0)
-	c.get() # returns 0 
-	freeze(c) # (1) -- this locks the value of the counter to 0
-	... 
-	Counter.get = lambda self: 42 # OK in CPython 3.12, throws exception with this PEP
-	c.get() # returns 42 in CPython 3.12
+  c = Counter(0)
+  c.get() # returns 0 
+  freeze(c) # (1) -- this locks the value of the counter to 0
+  ... 
+  Counter.get = lambda self: 42 # OK in CPython 3.12, throws exception with this PEP
+  c.get() # returns 42 in CPython 3.12
 
 With this PEP, the code above throws an exception on
 Line (1) because the type object for the ``Counter`` type
@@ -406,14 +481,14 @@ Consider the following scenario:
 
 .. code-block:: python
 
-	x = 0
-	def foo():
-		return x
+  x = 0
+  def foo():
+      return x
 
-	freeze(foo)
-	... # some code, e.g. pass foo to another thread
-	x = 1
-	foo()
+  freeze(foo)
+  ... # some code, e.g. pass foo to another thread
+  x = 1
+  foo()
 
 In the code above, the ``foo`` function object captures the ``x``
 variable from its enclosing scope. While ``x`` happens to point to
@@ -441,18 +516,18 @@ Now consider freezing the following function:
 
 .. code-block:: python
 
-	x = 0
-	def foo(a = False):
-		if a:
-			a = a + 1
-			return a
-		else:
-			x = x + 1
-			return x
+  x = 0
+  def foo(a = False):
+      if a:
+          a = a + 1
+          return a
+    else:
+        x = x + 1
+        return x
 
-	freeze(foo)
-	foo(41)  # OK, returns 42
-	foo()    # Throws NotWriteableError
+  freeze(foo)
+  foo(41)  # OK, returns 42
+  foo()    # Throws NotWriteableError
 
 This example illustrates two things. The first call to ``foo(41)``
 shows that local variables on the frame of a frozen function are
@@ -468,25 +543,19 @@ to ``globals()`` will throw an exception when called.
 Implementation Details
 ======================
 
-1. Introduce an ``is_immutable`` property on objects that tracks whether or
-   not they are frozen. The status is accessible through ``_Py_ISIMMUTABLE``
-   in the C API and in Python code through the ``isimmutable`` builtin.
+1. Introduce an ``is_immutable`` function in the ``sys`` module
+   that can check whether or not an object is frozen. The status
+   is accessible through ``_Py_ISIMMUTABLE`` in the C API and in
+   Python code through the ``isimmutable`` builtin.
 2. Modify object mutation operations (``PyObject_SetAttr``,
    ``PyDict_SetItem``, ``PyList_SetItem``, etc.) to check the 
    flag and raise an error when appropriate.
 3. Implement ``freeze(obj)``, ensuring it traverses object references
    safely, including cycle detection.
-4. The builtin ``freezeglobals()`` freezes the globals dictionary and
-   builtins. This is needed for multi-threaded scenarios such as
-   `PEP 703`_ and our planned extensions.
-
-
-Backward Compatibility
-======================
-
-This proposal is fully backward-compatible, as no existing Python
-code will be affected unless it explicitly calls ``freeze(obj)``.
-Frozen objects will raise errors only when mutation is attempted.
+4. The function ``freezeglobals`` in ``sys`` freezes the globals
+   dictionary and builtins. This is needed for multi-threaded
+   scenarios such as `PEP 703`_ and our planned extensions.
+   **TODO: check -- do we still need it?**
 
 
 Performance Implications
@@ -498,8 +567,8 @@ There are implementation-specific issues, such as
 various changes based on how and where the bit is stolen.
 
 
-Alternatives Considered
-=======================
+Rejected Alternatives
+=====================
 
 1. Shallow Freezing: Only mark the top-level object as immutable.
    This would be less effective for ensuring true immutability
@@ -511,7 +580,7 @@ Alternatives Considered
    mutation, create a modified copy. However, this changes object
    identity semantics and is less predictable. Support for copy-on-write
    may be added later, if a suitable design can be found.
-3. Immutable Subclasses: Introduce ImmutableDict, ImmutableList,
+3. Immutable Subclasses: Introduce ``ImmutableDict``, ``ImmutableList``,
    etc., instead of freezing existing objects. However, this does
    not generalize well to arbitrary objects and adds considerable
    complexity to all code bases.
@@ -539,6 +608,7 @@ Open Issues
 ===========
 
 1. How does deep freezing interact with weak references?
+   **TODO: needs a story ASAP**
 
 
 Future Extensions
@@ -559,6 +629,9 @@ This work will take place in the following discrete steps:
 4. Support for sharing mutable data across subinterpreters,
    with dynamic ownership protecting against data races.
 5. Support for behaviour-oriented concurrency.
+
+Note that each step above adds something which is directly useful
+to Python even before a subsequent step is taken.
 
 
 Support for Atomic Reference Counting
@@ -667,3 +740,12 @@ References
 
 .. _PEP 703: https://peps.python.org/pep-0703
 
+
+.. rubric:: Footnotes
+
+.. [#RC] Note that the same logic does not apply to e.g. an
+         object's reference count. The reference count is
+         metadata about an object that is stored in the object
+         for purely pragmatic reasons, but this data really
+         belongs to the memory management logic of the
+         interpreter, not the object itself.
