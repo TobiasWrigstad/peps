@@ -128,8 +128,10 @@ To map the code example above to the figure -- ``pair`` is *a* and ``list`` is *
 See also the discussion about extensions further down in this
 document.
 
-Deep immutability can be implemented efficiently. We discuss
-a read-barrier based approach in the alternatives.
+Deep immutability can be implemented efficiently. An alternative approach
+would be to detect data-races using a read-barrier based approach, however,
+this cannot be implemented as efficiently.  We discuss this in the alternatives
+section.
 
 
 Optimisations and Caching Benefits
@@ -156,8 +158,8 @@ decisions about changes to implementation detail, we are
 circulating this document to discuss the language design ideas,
 and some of the unaffected aspects of the implementation.
 
-An outline of the changes we anticipate when rebasing on
-Python 3.14 is `available <Rebasing on Python 3.14>`_.
+An outline of the changes that we anticipate are required for
+Python 3.14 is can be found at the `end of the document <Rebasing on Python 3.14>`_.
 
 
 Changes to Python Objects
@@ -340,7 +342,7 @@ Deep Freezing Semantics
 =======================
 
 Following the outcomes of the design decisions discussed just
-above, the ``freeze(obj)`` builtin works as follows:
+above, the ``freeze(obj)`` function works as follows:
 
 1. It recursively marks ``obj`` and all objects reachable from ``obj``
    immutable.
@@ -670,8 +672,7 @@ Future Extensions
 
 This PEP is the first in a series of PEPs with the goal of delivering
 a Data-Race Free Python that is theoretically compatible with, but 
-notably not contigent on, `PEP 703`_ -- despite delivering 
-multicore performance in Python.
+notably not contigent on, `PEP 703`_.
 
 This work will take place in the following discrete steps:
 
