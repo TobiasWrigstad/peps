@@ -676,34 +676,17 @@ notably not contigent on, `PEP 703`_.
 
 This work will take place in the following discrete steps:
 
-1. Atomic reference counting of immutable objects to permit 
-   concurrent increments and decrements on shared object RC's.
-2. Support for identifying and freeing cyclic immutable garbage
+1. Support for identifying and freeing cyclic immutable garbage
    using reference counting.
-3. Support for sharing immutable data across subinterpreters. 
+2. Support for sharing immutable data across subinterpreters using
+   atomic reference counting of immutable objects to permit 
+   concurrent increments and decrements on shared object RC's.
 4. Support for sharing mutable data across subinterpreters,
    with dynamic ownership protecting against data races.
 5. Support for behaviour-oriented concurrency.
 
 Note that each step above adds something which is directly useful
 to Python even before a subsequent step is taken.
-
-
-Support for Atomic Reference Counting
--------------------------------------
-
-As preparation for the extension `Sharing Immutable Data Across Subinterpreters`_,
-we will add support for atomic reference counting for immutable objects. This
-will complement work in `Simplified Garbage Collection for Immutable Object Graphs`_,
-which aims to make memory management of immutable data more efficient.
-
-When immutable data is shared across threads we must ensure that 
-concurrent reference count manipulations are correct, which in turns
-requires atomic increments and decrements. Note that since we are only
-planning to share immutable objects across different GIL's, it is
-*not* possible for two threads to read--write or write--write race
-on a single field. Thus we only need to protect the reference counter
-manipulations, avoiding most of the complexity of `PEP 703`_
 
 
 Simplified Garbage Collection for Immutable Object Graphs
@@ -730,6 +713,23 @@ SCC expire at once.
 
 This approach requires a second bit. Our `reference implementation`_
 already steals this bit in preparation for this extension.
+
+
+Support for Atomic Reference Counting
+-------------------------------------
+
+As a necessary requirement for the extension `Sharing Immutable Data Across Subinterpreters`_,
+we will add support for atomic reference counting for immutable objects. This
+will complement work in `Simplified Garbage Collection for Immutable Object Graphs`_,
+which aims to make memory management of immutable data more efficient.
+
+When immutable data is shared across threads we must ensure that 
+concurrent reference count manipulations are correct, which in turns
+requires atomic increments and decrements. Note that since we are only
+planning to share immutable objects across different GIL's, it is
+*not* possible for two threads to read--write or write--write race
+on a single field. Thus we only need to protect the reference counter
+manipulations, avoiding most of the complexity of `PEP 703`_
 
 
 Sharing Immutable Data Across Subinterpreters
@@ -764,8 +764,19 @@ borrow concepts from ownership (namely region-based ownership,
 see e.g. `Cyclone <https://cyclone.thelanguage.org/>`_) to make Python programs data-race free
 by construction. Which will permit multiple subinterpreters to
 share *mutable* state, although only one subinterpreter at a time
-will be able to access (read or write) to that state. In theory,
-this work could also be authored on-top of free-theaded Python (PEP 703).
+will be able to access (read or write) to that state. 
+This work is also compatible with free-theaded Python (PEP 703).
+
+A description of the ownership model can be found in a paper accepted
+for PLDI 2025 (an academic conference on design and implementation of
+programming languages): `Dynamic Region Ownership for Concurrency
+Safety <https://wrigstad.com/pldi2025.pdf>`_.
+
+While the above paper uses a threads-and-locks based model to explain
+the ownership model, we would like to explore behaviour-oriented
+concurrency, as introduced in a paper at OOPSLA 2023 (another academic
+conference on programming languages, systems and applications): `When
+Concurrency Matters <https://dl.acm.org/doi/pdf/10.1145/3622852>`_.
 
 It is important to point out that Data-Race Free Python is different
 from `PEP 703`_, but aims to be fully compatible with that PEP, and
