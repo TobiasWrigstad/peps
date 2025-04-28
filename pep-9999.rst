@@ -612,7 +612,7 @@ Implementation Details
    **TODO: check -- do we still need it?**
 6. Add a new exception type for attempts to mutate immutable objects.
    **TODO: check -- do we still need it?**
-
+   
 
 Performance Implications
 ========================
@@ -660,11 +660,33 @@ More Rejected Alternatives
        test and reproduce.
 
 
-Open Issues
-===========
+A Note on Modularisation
+========================
+   
+While the ``freeze(obj)`` function is available to Python programmers
+in the ``freeze`` module, the actual freezing code has to live
+inside core Python. This is for three reasons:
 
-1. How does deep freezing interact with weak references?
-   **TODO: needs a story ASAP**
+1. The core object type needs to be able to freeze just-in-time
+   dictionaries created by its accessors when the object itself is
+   frozen.
+2. The managed buffer type needs to be frozen when the object it
+   is created from is frozen.
+3. Teardown of strongly connected components of immutable objects
+   (see `Simplified Garbage Collection for Immutable Object
+   Graphs`_) must be hooked into ``Py_DECREF``.
+
+As such, we implement a function which is not in the limited API
+(and thus not part of the stable C ABI) called ``_Py_Freeze``
+which performs the freezing logic. This is used internally as a C
+Python implementation detail, and then exposed to Python through
+the ``freeze(obj)`` function in the ``freeze`` library.
+
+
+Weak References
+===============
+
+**TODO: needs a story ASAP**
 
 
 Future Extensions
@@ -679,11 +701,11 @@ This work will take place in the following discrete steps:
 1. Support for identifying and freeing cyclic immutable garbage
    using reference counting.
 2. Support for sharing immutable data across subinterpreters using
-   atomic reference counting of immutable objects to permit 
+   atomic reference counting of immutable objects to permit
    concurrent increments and decrements on shared object RC's.
-4. Support for sharing mutable data across subinterpreters,
-   with dynamic ownership protecting against data races.
-5. Support for behaviour-oriented concurrency.
+3. Support for sharing mutable data across subinterpreters, with
+   dynamic ownership protecting against data races.
+4. Support for behaviour-oriented concurrency.
 
 Note that each step above adds something which is directly useful
 to Python even before a subsequent step is taken.
