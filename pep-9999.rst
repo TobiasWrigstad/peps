@@ -20,18 +20,20 @@ Python. The mechanism requires some changes to the core language,
 but user-facing functions are delivered in a module called
 ``freeze``. This module provides two functions:
 
-1. ``freeze(obj)`` -- turns an ``obj`` deeply immutable
+1. ``freeze(obj)`` -- turns ``obj`` deeply immutable
 2. ``is_immutable(obj)`` -- returns ``True`` if ``obj`` is immutable
 
-Freezing an object recursively renders the object and all objects
-it references immutable. (This is *deep* immutability --- just
+Making an object *deeply* immutable recursively renders the object
+*and all objects it references* immutable. (Just
 making the first object immutable is called *shallow*
 immutability.)
 
 Deep immutability provides strong guarantees against
-unintended modifications, improving correctness, security, and
+unintended modifications, thereby improving correctness, security, and
 parallel execution safety.
 
+Immutable objects are not immortal -- their reference counts
+stay mutable.
 In this PEP, we rely on the GIL to ensure the correctness of
 reference counts of immutable objects, but we have several planned
 memory management extensions, including support for atomic
@@ -54,11 +56,14 @@ Immutability in action:
   f.f = g
   g.f = h
   h.f = g # cycles are OK!
+  del g # Remove local ref to g, so g's RC = 1
+  del h # Remove local reg to h, so h's RC = 1
 
   g.x = "African Swallow" # OK
   freeze(f) # Makes, f, g and h immutable
   g.x = "European Swallow" # Throws an exception "g is immutable"
   is_immutable(h) # returns True
+  h = None # Cycle detector will eventually find and collect the cycle
 
 
 Motivation
@@ -89,7 +94,7 @@ pressing concern. A deep immutability mechanism ensures that
 shared objects are not modified concurrently, enabling safer
 multi-threaded and parallel computation. Safe sharing of immutable
 objects across multiple threads require deep immutability.
-Consider the following code:
+Consider the following example:
 
 .. code-block:: python
 
@@ -130,8 +135,9 @@ document.
 
 Deep immutability can be implemented efficiently. An alternative approach
 would be to detect data-races using a read-barrier based approach, however,
-this cannot be implemented as efficiently.  We discuss this in the alternatives
-section.
+this cannot be implemented as efficiently. We discuss this in the alternatives
+section. As highlighted above, immutability also has value in single-threaded
+application, i.e. where there is no fear of data races.
 
 
 Optimisations and Caching Benefits
@@ -204,7 +210,7 @@ dozen files. **TODO: update this number**
 Backward Compatibility
 ======================
 
-This proposal is fully backward-compatible, as no existing Python
+This proposal is fully backward compatible, as no existing Python
 code will be affected unless it explicitly calls ``freeze(obj)``.
 Frozen objects will raise errors only when mutation is attempted.
 **TODO: What about objects that are immutable by default?**
