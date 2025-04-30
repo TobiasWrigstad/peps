@@ -393,20 +393,15 @@ Consider the following code:
   x = Foo()
   x.f = 42
 
-If we glance over some implementation details such as the classes
-of strings and ints being implemented in C, and the naming of
-fields, the code above gives rise to the following object graph:
-**TODO: address Brandt's comments about this**
 
-.. image:: pep-9999/freeze1.svg
-   :width: 66%
-
-The ``Foo`` instance pointed to by ``x`` consists of several objects: its fields are stored in a 
-dictionary object, and the assignment ``x.f = 42`` adds two objects to the dictionary in the form
-of a string key ``"f"`` and its associated value ``42``. These objects each have a class pointers
-pointing to the ``string`` and ``int`` classes respectively. Similarly, the ``foo`` instance has
-a pointer to the ``Foo`` class. Finally, all these classes have a pointer to the same meta class
-object (``Type``).
+The ``Foo`` instance pointed to by ``x`` consists of several
+objects: its fields are stored in a dictionary object, and the
+assignment ``x.f = 42`` adds two objects to the dictionary in the
+form of a string key ``"f"`` and its associated value ``42``.
+These objects each have pointers to the ``string`` and ``int``
+type objects respectively. Similarly, the ``foo`` instance has a
+pointer to the ``Foo`` type object. Finally, all type objects have
+pointers to the same meta class object (``type``).
 
 Calling ``freeze(x)`` will freeze **all** of these objects.
 
