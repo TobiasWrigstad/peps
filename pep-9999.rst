@@ -710,6 +710,19 @@ reference loses its object during freezing, we treat this as a
 failure to freeze since the program is effectively racing with the
 garbage collector.
 
+A **rejected alternative** is to nullify the weak reference during
+freezing. This avoid the promotion to a strong reference while
+ensures that the immutable object stays the same throughout its
+lifetime, but probably has the unwanted semantics of pruning the
+object graph while freezing it. (Imagine a hash table with weak
+references for its keys -- if freezing it removes all its keys,
+the hash table is essentially useless.)
+
+Another **rejected alternative** is to simply leave weak references
+as is. This was rejected as it makes immutable objects effectively
+mutable and access to shared immutable objects can race on accesses
+to weak references.
+
 
 Future Extensions
 =================
