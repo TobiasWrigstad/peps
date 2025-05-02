@@ -21,8 +21,8 @@ but user-facing functions are delivered in a module called
 ``immutable``. This module provides the following functions and types:
 
 1. The function ``freeze(obj)`` -- turns ``obj`` deeply immutable
-2. The function ``is_frozen(obj)`` -- returns ``True`` if ``obj`` is immutable
-3. The function ``is_freezable(obj)`` -- returns ``True`` if all objects reachable from ``obj`` can be frozen
+2. The function ``isfrozen(obj)`` -- returns ``True`` if ``obj`` is immutable
+3. The function ``isfreezable(obj)`` -- returns ``True`` if all objects reachable from ``obj`` can be frozen
 4. The type ``NotFreezable`` which is an empty type which cannot be frozen and can be used as a super class to classes whose instances should not be freezable
 5. The type ``NotFreezableError`` which is raised on an attempt to mutate an immutable object
 6. The function ``register_freezable(type)`` -- which is used to whitelist types implemented as C extensions, permitting their instances to be frozen
@@ -48,7 +48,7 @@ Immutability in action:
 
 .. code-block:: python
 
-  from immutable import freeze, is_frozen
+  from immutable import freeze, isfrozen
 
   class Foo:
       pass
@@ -66,7 +66,7 @@ Immutability in action:
   g.x = "African Swallow" # OK
   freeze(f) # Makes, f, g and h immutable
   g.x = "European Swallow" # Throws an exception "g is immutable"
-  is_frozen(h) # returns True
+  isfrozen(h) # returns True
   h = None # Cycle detector will eventually find and collect the cycle
 
 
@@ -223,7 +223,8 @@ Frozen objects will raise errors only when mutation is attempted.
 Opt-In vs. Opt-Out
 ------------------
 
-All pure Python objects can be frozen. However, for types which
+All pure Python objects can be frozen, provided all their members
+and their base classes can be frozen. However, for types which
 are partially or completely implemented in C, support for
 immutability requires some work on both exposing objects to
 freezing, and to enforce immutability in mutating C-functions.
@@ -235,6 +236,7 @@ opt-in model is that a large part of all Python libraries cannot
 be (even nominally) frozen.
 
 This PEP proposes to make support for immutability in C extensions
+and Python wrappers of classes which would otherwise not be freezable
 opt-in through a whitelisting mechanism implemented through the
 function ``register_freezable(type)`` in the ``immutable`` module.
 
@@ -315,13 +317,31 @@ cycle detector, types defined through C code will support immutability
 "out of the box" as long as they use Python standard types to store
 data and uses the built-in functions of these types to modify the data.
 
-To make its instances freezable, types using C extensions must
-register themselves using ``register_freezable(type)``. To
-properly support immutability, C extensions that directly write to
-data which can be made immutable should add the ``Py_CHECKWRITE``
-macro shown above on all paths in the code that lead to writes to
-that data. Notably, if C extensions manage their data through
-Python objects, no changes are needed.
+To make its instances freezable, a type that uses C extensions
+that adds new functionality implemented in C must register
+themselves using ``register_freezable(type)``. Example:
+
+.. code-block:: Python
+
+    PyObject *register_freezable = _PyImport_GetModuleAttrString("immutable", "register_freezable");
+    if(register_freezable != NULL)
+    {
+        PyObject* result = PyObject_CallOneArg(register_freezable, (PyObject *)st->Element_Type);
+        if(result == NULL){
+            goto error;
+        }
+
+        Py_DECREF(register_freezable);
+    }
+
+If you construct a C type using freezable metaclasses it will itself be freezable,
+without need for explicit registration.
+
+To properly support immutability, C extensions that directly write
+to data which can be made immutable should add the
+``Py_CHECKWRITE`` macro shown above on all paths in the code that
+lead to writes to that data. Notably, if C extensions manage their
+data through Python objects, no changes are needed.
 
 **Rejected alternative**: Python objects may define a
 ``__freeze__`` method which will be called **after** an object has
@@ -616,20 +636,39 @@ Implementation Details
    cycle detection, and marks objects appropriately, and backs
    out on failure, without partially freezing object graphs.
 3. Add the ``register_freezable(type)`` whitelisting function.
-4. Add the ``is_freezable(obj)`` function which checks that all
+4. Add the ``isfreezable(obj)`` function which checks that all
    objects reachable from ``obj`` can be frozen.
 5. Add the ``register_freezable(type)`` function that is used to
    whitelist types implemented as C extensions, permitting their
    instances to be frozen.
-6. Add the ``is_frozen(obj)`` function to the ``immutable`` module
+6. Add the ``isfrozen(obj)`` function to the ``immutable`` module
    that checks whether or not an object is frozen. The status
    is accessible through ``_Py_ISIMMUTABLE`` in the C API and in
-   Python code through the ``is_frozen(obj)`` function.
+   Python code through the ``isfrozen(obj)`` function.
 7. Modify object mutation operations (``PyObject_SetAttr``,
    ``PyDict_SetItem``, ``PyList_SetItem``, etc.) to check the 
    flag and raise an error when appropriate.
 8. Modify mutation operations in modules in the standard library.
 
+
+Changes to the C ABI
+--------------------
+
+* ``Py_CHECKWRITE``
+* ``_Py_IsImmutable``
+* ``PyErr_WriteToImmutable``
+
+Changes to the internal API
+---------------------------
+
+* ``_PyType_HasExtensionSlots(PyTypeObject*)`` -- determines whether a TypeObject adds novel functionality in C
+* ``_PyNotFreezable_Type``
+* ``_PyImmutability_Freeze``
+* ``_RegisterFreezable``
+* ``_PyImmutability_IsFreezable``
+
+
+   
 
 Performance Implications
 ========================
@@ -694,7 +733,7 @@ inside core Python. This is for three reasons:
    Graphs`_) must be hooked into ``Py_DECREF``.
 
 As such, we implement a function which is not in the limited API
-(and thus not part of the stable C ABI) called ``_Py_Freeze``
+(and thus not part of the stable C ABI) called ``_PyImmutability_Freeze``
 which performs the freezing logic. This is used internally as a C
 Python implementation detail, and then exposed to Python through
 the ``freeze(obj)`` function in the ``immutable`` module.
@@ -849,7 +888,7 @@ implementation, including:
   in this document. The former also blocks changes to the captured
   variable in the enclosing scope because they currently share a
   common cell object.
-- The ``is_freezable(obj)`` function is not yet implemented.
+- The ``isfreezable(obj)`` function is not yet implemented.
 - The ``NotFreezable`` type is currently freezable (but inheriting
   from it stops instances of the inheriting class from being frozen). 
 
