@@ -883,11 +883,6 @@ Reference Implementation
 There are some discrepancies between this PEP and the reference
 implementation, including:
 
-- Freezing a nested function behaves slightly different from
-  freezing a top-level function. The latter behaves as outlined
-  in this document. The former also blocks changes to the captured
-  variable in the enclosing scope because they currently share a
-  common cell object.
 - The ``isfreezable(obj)`` function is not yet implemented.
 - The ``NotFreezable`` type is currently freezable (but inheriting
   from it stops instances of the inheriting class from being frozen). 
