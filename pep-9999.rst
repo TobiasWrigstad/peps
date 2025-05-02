@@ -857,7 +857,29 @@ implementation, including:
 Rebasing on Python 3.14
 =======================
 
-**TODO MJP**
+We have found two areas that need to be addressed to integrate this work with "free-threaded Python": data-representation and data-races during freeze.
+
+Data-representation for immutability
+------------------------------------
+
+With free-threaded Python the representation of the reference count has been changed.  We could either borrow a bit to represent if an object is frozen, or alternatively, we could use the new `ob_tid` field to have a special value for immutable state.  Using `ob_tid` would allow for standard mutable thread local objects to remain the fast path, and is our preferred alternative.
+
+The extensions use use SCC calculations to detect cycles in immutable graphs, would require additional state.  Repurposing `ob_tid` and `ob_ref_shared` would allow sufficient space for the necessary calculation.
+
+Data-races during freeze
+------------------------
+
+We consider the following races
+
+- Freezing some objects concurrently with another thread checking if a graph is immutable.
+- Freezing some objects concurrently with another thread mutating those objects.
+- Freezing some objects concurrently with another thread freezing those objects.
+
+To address the first race, we need to consider strictness of deep immutability.  We need to ensure that querying an object graph for immutability only says yes if it is deeply immutable. This requires a two step immutable state: immutable but not strict, and then immutable and strict. On a DFS traversal of the object graph items are marked as immutable but not strict on the pre-order step, and then immutable and strict on the post-order step.  To query if a graph is immutable, we will require the "immutable and strict" state.
+
+Handling mutation during freeze can use the mutex added by free-threading. There are some cases where mutation does not require the acquisition of a mutex, which would no longer allowed with this feature.  Freezing would be required to lock the object, marks it as immutable, release the lock, and then read all its fields.
+
+The final case is the most complex detecting parallel freezing of an object graph.  We will consider this an error.  This error can be detected as follows.  If we encounter an object that is "immutable but not strict", then this should be on the path to the current object from the starting point of the freeze.  If this is not the case, then we must be observing another thread freezing an object graph.  The algorithm should back out the pending aspects of freeze, and raise an exception to the user.  This can naturally be integrated with the SCC algorithm. 
 
 
 References
