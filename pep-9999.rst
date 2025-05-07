@@ -303,14 +303,14 @@ the possible behaviours of ``freeze(o1)``?
    the implementation, and also for the user.
    
 This PEP proposes following alternative 1, where freezing either
-succeeds or fails completely.
+succeeds or fails partially.
 
 
 New Obligations on C Extensions
 -------------------------------
 
 Due to the opt-in decision, there are no *obligations* for C
-extensions that does not want to add support for immutability. 
+extensions that do not want to add support for immutability. 
 
 Because our implementation builds on information available to the CPython
 cycle detector, types defined through C code will support immutability 
@@ -466,7 +466,7 @@ Consequences of Deep Freezing
   to the mutable copy by reassigning ``__class__``.
 * Metaclass Freezing: Since class objects have metaclasses,
   freezing a class may propagate upwards through the metaclass
-  hierarchy. This means that the ``Type`` object will be made immutable
+  hierarchy. This means that the ``type`` object will be made immutable
   at the first call of ``freeze``. **Mitigation:** We have not explored
   mitigation for this, and we are also not aware of major problems
   stemming from this design.
@@ -635,10 +635,9 @@ Implementation Details
    ensure that it traverses object references safely, including
    cycle detection, and marks objects appropriately, and backs
    out on failure, without partially freezing object graphs.
-3. Add the ``register_freezable(type)`` whitelisting function.
-4. Add the ``isfreezable(obj)`` function which checks that all
+3. Add the ``isfreezable(obj)`` function which checks that all
    objects reachable from ``obj`` can be frozen.
-5. Add the ``register_freezable(type)`` function that is used to
+4. Add the ``register_freezable(type)`` function that is used to
    whitelist types implemented as C extensions, permitting their
    instances to be frozen.
 6. Add the ``isfrozen(obj)`` function to the ``immutable`` module
