@@ -634,7 +634,7 @@ Implementation Details
 2. Add the ``freeze(obj)`` function to the ``immutable`` module and
    ensure that it traverses object references safely, including
    cycle detection, and marks objects appropriately, and backs
-   out on failure, without partially freezing object graphs.
+   out on failure, possibly partially freezing the object graph.
 3. Add the ``isfreezable(obj)`` function which checks that all
    objects reachable from ``obj`` can be frozen.
 4. Add the ``register_freezable(type)`` function that is used to
