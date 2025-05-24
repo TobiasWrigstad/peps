@@ -851,7 +851,7 @@ Currently in Python, ``x: Foo`` does not give very strong
 guarantees about whether ``x.bar(42)`` will work or not, because
 of Python's strong reflection support that permits changing a
 class at run-time, or even changing the type of an object.
-Making objects immutable in-place exacerbate this situation as
+Making objects immutable in-place exacerbates this situation as
 ``x.bar(42)`` may now fail because ``x`` has been made immutable.
 However, in contrast to failures due to reflective changes of
 a class, a ``NotFreezableError`` will point to the place in the
@@ -860,8 +860,8 @@ code where the object was frozen. This should facilitate debugging.
 In short: the possibility of making objects immutable in-place
 does not weaken type-based reasoning in Python on a fundamental
 level. However, if immutability becomes very frequently used, it
-may lead to weaknessed which already exist in Python's current
-typing story being exercised more frequently. As alluded to in the
+may lead to the unsoundness which already exists in Python's current
+typing story surfacing more frequently. As alluded to in the
 future work on `Data-Race Free Python`_, this can be mitigated by
 using region-based ownership.
 
@@ -871,16 +871,16 @@ typing becomes more important as some methods require that self is
 mutable, some require that self is immutable (e.g. to be
 thread-safe), and some methods can operate on either self type.
 The latter subtly needs to preserve the invariants of immutability
-but cannot rely on immutability. We would need a way of expressing
-this in the type system. This could probably be done by annotating
-the self type in the three different ways above -- mutable,
-immutable, and works either way.
+but also cannot rely on immutability. We would need a way of
+expressing this in the type system. This could probably be done by
+annotating the self type in the three different ways above --
+mutable, immutable, and works either way.
 
 A possibility would be to express the immutable version of a type
 ``T`` as the intersection type ``immutable & T`` and a type that
 must preserve immutability but may not rely on it as the union
 of the immutable intersection type with its mutable type
-``(immutable & T) | T``. 
+``(immutable & T) | T``.
 
 Furthermore, deep immutability requires some form of "view-point
 adaption", which means that when ``x`` is immutable, ``x.f`` is
@@ -897,7 +897,6 @@ proposal to consider for the future in conjunction with work on
 typing immutability.
 
 
-
 Naming
 ======
 
@@ -906,7 +905,7 @@ is simple, standard, and sufficiently distinguishable from other
 concepts like frozen modules. 
 
 We also propose to call the act of making something immutable
-"freezing", and the function that does to ``freeze()``. This is
+"freezing", and the function that does so ``freeze()``. This is
 the same as used in JavaScript and Ruby and is considerably
 snappier than ``make_immutable()`` which we suspect would be
 immediately shortened in the community lingo. The major concern
@@ -920,9 +919,10 @@ verb for the action seems reasonable. Because the term immutable
 is so standard, we should think twice about replacing it with
 something else.
 
-Qualifying immutability and freezing with an additional "deep"
-seems like adding extra hassle for unclear gains. (As proposed
-`here <https://discuss.python.org/t/adding-deep-immutability/92011/6>`_).
+Qualifying immutability and freezing with an additional "deep" (as
+proposed `here
+<https://discuss.python.org/t/adding-deep-immutability/92011/6>`_)
+seems like adding extra hassle for unclear gains.
 
 
 Future Extensions
