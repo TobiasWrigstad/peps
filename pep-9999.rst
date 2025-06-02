@@ -811,16 +811,73 @@ to weak references.
 Hashing
 =======
 
-TODO
-https://discuss.python.org/t/adding-deep-immutability/92011/7
-https://discuss.python.org/t/adding-deep-immutability/92011/57
+Deep immutability opens up the possibility of any freezable object being
+hashable, due to its pointer being a stable, unique integer associated
+with the object for its entire post-freeze lifetime. However, there are
+several complications which should be kept in mind for any future PEPs
+which build on this work at add this functionality.
 
-Cashing
-=======
+Instance versus Type Hashability
+--------------------------------
 
-TODO
-https://discuss.python.org/t/adding-deep-immutability/92011/78
+At the moment, the test for
+`hashability <https://docs.python.org/3/glossary.html#term-hashable)`_
+is based upon the presence (or absence) of a `__hash__` method and an
+`__eq__` method. Places where `PyObject_HashNotImplemented` is currently
+used would need to be modified as appropriate to have a contextual logic
+which provides a default implementation that uses `id()` if the object
+instance has been frozen, and throws a type error if not.
 
+This causes issues with type checks, however. The check of
+`isinstance(x, Hashable)` would need to become contextual, and 
+`issubclass(type(x), Hashable)` would become underdetermined for
+many types. Handling this in a way that is not surprising will require
+careful design considerations.
+
+Equality of Immutable Objects
+-----------------------------
+
+One consideration with the naive approach (*i.e.*, hash via `id()`) is
+that it can result in confusing outcomes. For example, if there were
+to be two lists:
+
+.. code-block:: python
+  a = [1, 2, 3, 4]
+  b = [1, 2, 3, 4]
+  assert(hash(a) == hash(b))
+
+There would be a reasonable expectation that this assertion would be true,
+as it is for two identically defined tuples. However, without a careful
+implementation of `__hash__` and `__eq__` this would not be the case.
+Our opinion is that an approach like that used in `tuplehash` is
+recommended in order to avoid this behavior.
+
+Decorators of Immutable Functions
+=================================
+
+One natural issue that arises from deeply immutable functions is the
+state of various objects which are attached to them, such as decorators.
+In particular, the case of `lru_cache` is worth investigating. If the cache
+is made immutable, then freezing the function has essentially disabled the
+functionality of the decorator. This might be the correct and desirable
+functionality, from a thread safety perspective! In practice, we see three
+potential approaches:
+
+1. The cache is frozen in its state at the point when freeze is called.
+Cache misses will result in an immutability exception.
+2. Access to the cache is protected by a lock to ensure thread safety
+3. There is one version of the cache per interpreter
+
+There are arguments in favor of each. Of them, (3) would
+require additional class to be added (*e.g.*, via the `immutable` module)
+which provides "interpreter local" dictionary variable that can be safely
+accessed by whichever interpreter is currently calling the immutable function.
+We have chosen (1) in order to provide clear feedback to the programmer that
+they likely do not want to freeze a function which has a (necessarily) mutable
+decorator or other object attached to it. It is likely not possible to make
+all decorators work via a general mechanism, but providing some tools to
+provide library authors with the means to provide a better experience for
+immutable decorators is in scope for a future PEP building on this work.
 
 Deferred Ideas
 ==============
