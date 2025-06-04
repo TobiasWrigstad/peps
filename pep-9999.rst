@@ -22,10 +22,10 @@ but user-facing functions are delivered in a module called
 
 1. The function ``freeze(obj)`` -- turns ``obj`` deeply immutable
 2. The function ``isfrozen(obj)`` -- returns ``True`` if ``obj`` is immutable
-3. The function ``isfreezable(obj)`` -- returns ``True`` if all objects reachable from ``obj`` can be frozen
-4. The type ``NotFreezable`` which is an empty type which cannot be frozen and can be used as a super class to classes whose instances should not be freezable
+3. The function ``isfreezable(obj)`` -- returns ``True`` if all objects reachable from ``obj`` can be made immutable
+4. The type ``NotFreezable`` which is an empty type which cannot be made immutable and can be used as a super class to classes whose instances should not be possible to freeze
 5. The type ``NotFreezableError`` which is raised on an attempt to mutate an immutable object
-6. The function ``register_freezable(type)`` -- which is used to whitelist types implemented as C extensions, permitting their instances to be frozen
+6. The function ``register_freezable(type)`` -- which is used to whitelist types implemented as C extensions, permitting their instances to be made immutable
 
 Making an object *deeply* immutable recursively renders the object
 *and all objects it references* immutable. (Just
@@ -119,7 +119,7 @@ spawned thread will be racing with the deletion. In Python 3.12,
 this is not a problem as the GIL prevents this race. To ensure
 `container thread-safety
 <https://peps.python.org/pep-0703/#container-thread-safety>`_, PEP
-703 proposes per-object locks instead. If ``pair`` was frozen, the
+703 proposes per-object locks instead. If ``pair`` is immutable, the
 deletion would have caused an error.
 
 The following image illustrates that as soon as an object *a*
@@ -217,14 +217,14 @@ Backward Compatibility
 
 This proposal intends to be fully backward compatible, as no existing Python
 code will be affected unless it explicitly calls ``freeze(obj)``.
-Frozen objects will raise errors only when mutation is attempted.
+Immutable objects will raise errors only when mutation is attempted.
 
 
 Opt-In vs. Opt-Out
 ------------------
 
-All pure Python objects can be frozen, provided all their members
-and their base classes can be frozen. However, for types which
+All pure Python objects can be made immutable, provided all their members
+and their base classes can be made immutable. However, for types which
 are partially or completely implemented in C, support for
 immutability requires some work on both exposing objects to
 freezing, and to enforce immutability in mutating C-functions.
@@ -233,7 +233,7 @@ From a backwards compatibility perspective, an opt-in model keeps
 things simple: all existing code keeps working, and only code that
 wishes to support immutability needs updating. The downside of the
 opt-in model is that a large part of all Python libraries cannot
-be (even nominally) frozen.
+be (even nominally) made immutable.
 
 This PEP proposes to make support for immutability in C extensions
 and Python wrappers of classes which would otherwise not be freezable
@@ -268,17 +268,17 @@ types will not be freezable. (Example such types include IO types
 like file handles, and caches -- as opposed to the cached
 objects.) This raises the question how to handle failure to freeze
 an object graph. Consider the object graph ``o1 --> o2 --> o3``
-where ``o1`` and ``o3`` can be frozen, but ``o2`` cannot. What are
-the possible behaviours of ``freeze(o1)``?
+where ``o1`` and ``o3`` can be made immutable, but ``o2`` cannot.
+What are the possible behaviours of ``freeze(o1)``?
 
-1. Freeze fails partially. All subgraphs which could be frozen
-   entirely remain frozen. Remaining objects remain mutable. In
-   our example, ``o3`` remains frozen but ``o1`` and ``o2`` remain
-   mutable. This preserves strict immutability. The exception
-   thrown by the failing ``freeze(o1)`` call will contain ``o2``
-   (the place that caused freezing to fail) and ``o1`` (the object
-   in the graph that holds on to the failing object) to facilitate
-   debugging.
+1. Freeze fails partially. All subgraphs which could be made
+   immutable entirely remain immutable. Remaining objects remain
+   mutable. In our example, ``o3`` remains immutable but ``o1`` and
+   ``o2`` remain mutable. This preserves strict immutability. The
+   exception thrown by the failing ``freeze(o1)`` call will
+   contain ``o2`` (the place that caused freezing to fail) and
+   ``o1`` (the object in the graph that holds on to the failing
+   object) to facilitate debugging.
 2. **Rejected alternative**: Freeze fails completely. In the strict
    interpretation of deep immutability, freezing ``o1`` is not
    possible because ``o1`` contains a reference to an un-freezable
@@ -371,6 +371,50 @@ starting places are ``object.c`` `[1]`_ and ``dictobject.c`` `[2]`_.
 .. _[1]: https://github.com/mjp41/cpython/pull/51/files#diff-ba56d44ce0dd731d979970b966fde9d8dd15d12a82f727a052a8ad48d4a49363
 .. _[2]: https://github.com/mjp41/cpython/pull/51/files#diff-b08a47ddc5bc20b2e99ac2e5aa199ca24a56b994e7bc64e918513356088c20ae
 
+
+Expected Usage of Immutability
+------------------------------
+
+The main motivation for adding immutability in this PEP is to
+facilitate concurrent programming in Python. This is not something
+that Python's type system currently supports -- developers have to
+rely on other (i.e. not type-driven) methods to communicate around
+thread-safety and locking protocols. We expect that the same
+methodology works for immutable objects with the added benefit
+that mistakes lead to exceptions rather than incorrectness bugs or
+crashes. As the Python community adopts immutability, we expect to
+learn about the patterns that arise and this can inform e.g. how
+to develop tools, documentation, and types for facilitating
+programming with immutable objects in Python.
+
+We expect that libraries that for example want to provide intended
+constants may adopt immutability as a way to guard against someone
+say re-defining pi. Freezing a module's state can be made optional
+(opt-in or opt-out) so that the option of re-defining pi can be
+retained.
+
+If immutability is adopted widely, we would expect libraries to
+contain a section that detail what types etc. that it provides
+that can be made immutable or not. If Python's type system adds
+support for (say) distinguishing between must-be-mutable,
+must-be-immutability, and may-be-immutable, such annotations can
+be added to the documentation of a library's public API.
+
+If a library relies on user-provided data to be immutable, we
+expect the appropriate pattern is to check that the data is
+immutable and if not raising an exception rather than to make the
+data immutable inside the library code. This pushes the obligation
+to the user in a way that will not lead to surprises due to data
+becoming immutable under foot.
+
+We expect programmers to use immutability to facilitate safe
+communication between threads, and for safe sharing of data
+between threads. In both cases, we believe it is convenient to be
+able to freeze a data structure in-place and share it, and we
+expect programmers to have constructed these data structures with
+this use case in mind. 
+
+
 Deep Freezing Semantics
 =======================
 
@@ -381,7 +425,7 @@ above, the ``freeze(obj)`` function works as follows:
    immutable.
 2. If ``obj`` is already immutable (e.g., an integer, string, or a
    previously frozen object), the recursion terminates. If ``obj`` cannot
-   be frozen, the entire freeze operation is aborted without making any
+   be made immutable, the entire freeze operation is aborted without making any
    object immutable.
 3. The freeze operation follows object references (relying on ``tp_traverse`` 
    in the type structs of the objects involved), including:
@@ -396,7 +440,7 @@ above, the ``freeze(obj)`` function works as follows:
     * The ``__bases__`` chain in classes (freezing a class freezes its
       base classes).
 
-5. Attempting to mutate a frozen object raises a type error
+5. Attempting to mutate an immutable object raises a type error
    with a self-explanatory message.
 
 
@@ -458,7 +502,7 @@ Consequences of Deep Freezing
   across threads would lead to sharing its *mutable* type object. Thus,
   freezing an object also freezes the type type object of its super
   classes. This means that any metaprogramming or changes to a class
-  must happen before a class is frozen. **Mitigation:** A frozen class
+  must happen before a class is made immutable. **Mitigation:** An immutable class
   can be extended and its behaviour overridden through normal object-oriented
   means. If neccessary, it is possible to add an option to make a mutable
   copy of immutable objects and classes, which could then be changed.
@@ -482,7 +526,7 @@ Consequences of Deep Freezing
   disable module imports by freezing.
 
 As the above list shows, a side-effect of freezing an object is
-that its type becomes frozen too. Consider the following program,
+that its type becomes immutable too. Consider the following program,
 which is not legal in this PEP because it modifies the type of an
 immutable object:
 
@@ -504,7 +548,7 @@ immutable object:
   c.get() # returns 0 
   freeze(c) # (*) -- this locks the value of the counter to 0
   ... 
-  Counter.get = lambda self: 42 # throws exception because Counter is frozen
+  Counter.get = lambda self: 42 # throws exception because Counter is immutable
   c.get() # would have returned 42 unless the line above had been "stopped"
 
 With this PEP, the code above throws an exception on
@@ -516,11 +560,11 @@ work and the counter will effectively be mutable because
 of the change to its class. 
 
 The dangers of not freezing the type is apparent when considering
-avoiding data races in a concurrent program. If a frozen counter
+avoiding data races in a concurrent program. If an immutable counter
 is shared between two threads, the threads are still able to
 race on the ``Counter`` class type object.
 
-As types are frozen, this problem is avoided. Note that
+As types are immutable, this problem is avoided. Note that
 freezing a class needs to freeze its superclasses as well.
 
 
@@ -531,7 +575,7 @@ CPython classes hold references to their subclasses. If
 immutability it taken literally, it would not be permitted to
 create a subclass of an immutable type. Because this reference
 does not get exposed to the programmer in any dangerous way, we
-permit frozen classes to be subclassed (by mutable classes). C.f.
+permit immutable classes to be subclassed (by mutable classes). C.f.
 `Sharing Immutable Data Across Subinterpreters`_.
 
 
@@ -602,7 +646,7 @@ Now consider freezing the following function:
       x = 0
       def foo(a = False):
           nonlocal x
-          if a:
+            if a:
               a = a + 1 # Note: updating local variables work, even in a frozen function
               return a
           else:
@@ -616,13 +660,13 @@ Now consider freezing the following function:
   example2()
 
 This example illustrates two things. The first call to ``foo(41)``
-shows that local variables on the frame of a frozen function are
-mutable. The second call shows that captured variables are not.
-Note that the default value of ``a`` will be frozen when ``foo``
-is frozen. Thus, the problem of side-effects on default values
-on parameters is avoided.
+shows that local variables on the frame of a call to an immutable
+function objects are mutable. The second call shows that captured
+variables are not. Note that the default value of ``a`` will be
+made immutable when ``foo`` is frozen. Thus, the problem of
+side-effects on default values on parameters is avoided.
 
-Frozen function objects that access globals, e.g. through an
+Immutable function objects that access globals, e.g. through an
 explicit call to ``globals()``, will throw an exception when
 called.
 
@@ -637,12 +681,12 @@ Implementation Details
    cycle detection, and marks objects appropriately, and backs
    out on failure, possibly partially freezing the object graph.
 3. Add the ``isfreezable(obj)`` function which checks that all
-   objects reachable from ``obj`` can be frozen.
+   objects reachable from ``obj`` can be made immutable.
 4. Add the ``register_freezable(type)`` function that is used to
    whitelist types implemented as C extensions, permitting their
-   instances to be frozen.
+   instances to be made immutable.
 6. Add the ``isfrozen(obj)`` function to the ``immutable`` module
-   that checks whether or not an object is frozen. The status
+   that checks whether or not an object is immutable. The status
    is accessible through ``_Py_ISIMMUTABLE`` in the C API and in
    Python code through the ``isfrozen(obj)`` function.
 7. Modify object mutation operations (``PyObject_SetAttr``,
@@ -691,7 +735,8 @@ More Rejected Alternatives
 2. Copy-on-Write Immutability: Instead of raising errors on
    mutation, create a modified copy. However, this changes object
    identity semantics and is less predictable. Support for copy-on-write
-   may be added later, if a suitable design can be found.
+   may be added later, if a suitable design can be found, but not as
+   an alternative to what this PEP proposes.
 3. Immutable Subclasses: Introduce ``ImmutableDict``, ``ImmutableList``,
    etc., instead of freezing existing objects. However, this does
    not generalize well to arbitrary objects and adds considerable
@@ -725,9 +770,9 @@ inside core Python. This is for three reasons:
 
 1. The core object type needs to be able to freeze just-in-time
    dictionaries created by its accessors when the object itself is
-   frozen.
-2. The managed buffer type needs to be frozen when the object it
-   is created from is frozen.
+   immutable.
+2. The managed buffer type needs to be immutable when the object it
+   is created from is immutable.
 3. Teardown of strongly connected components of immutable objects
    (see `Simplified Garbage Collection for Immutable Object
    Graphs`_) must be hooked into ``Py_DECREF``.
@@ -763,6 +808,180 @@ mutable and access to shared immutable objects can race on accesses
 to weak references.
 
 
+Hashing
+=======
+
+Deep immutability opens up the possibility of any freezable object being
+hashable, due to the fixed state of the object graph making it possible to compute
+stable hash values over the graph as is the case with `tuple` and `frozenset` . However,
+there are several complications (listed below) which should be kept in mind for any future
+PEPs which build on this work at add hashability for frozen objects:
+
+Instance versus Type Hashability
+--------------------------------
+
+At the moment, the test for
+`hashability <https://docs.python.org/3/glossary.html#term-hashable)`_
+is based upon the presence (or absence) of a `__hash__` method and an
+`__eq__` method. Places where `PyObject_HashNotImplemented` is currently
+used would need to be modified as appropriate to have a contextual logic
+which provides a default implementation that uses `id()` if the object
+instance has been frozen, and throws a type error if not.
+
+This causes issues with type checks, however. The check of
+`isinstance(x, Hashable)` would need to become contextual, and 
+`issubclass(type(x), Hashable)` would become underdetermined for
+many types. Handling this in a way that is not surprising will require
+careful design considerations.
+
+Equality of Immutable Objects
+-----------------------------
+
+One consideration with the naive approach (*i.e.*, hash via `id()`) is
+that it can result in confusing outcomes. For example, if there were
+to be two lists:
+
+.. code-block:: python
+  a = [1, 2, 3, 4]
+  b = [1, 2, 3, 4]
+  assert(hash(a) == hash(b))
+
+There would be a reasonable expectation that this assertion would be true,
+as it is for two identically defined tuples. However, without a careful
+implementation of `__hash__` and `__eq__` this would not be the case.
+Our opinion is that an approach like that used in `tuplehash` is
+recommended in order to avoid this behavior.
+
+Decorators of Immutable Functions
+=================================
+
+One natural issue that arises from deeply immutable functions is the
+state of various objects which are attached to them, such as decorators.
+In particular, the case of `lru_cache` is worth investigating. If the cache
+is made immutable, then freezing the function has essentially disabled the
+functionality of the decorator. This might be the correct and desirable
+functionality, from a thread safety perspective! In practice, we see three
+potential approaches:
+
+1. The cache is frozen in its state at the point when freeze is called.
+Cache misses will result in an immutability exception.
+2. Access to the cache is protected by a lock to ensure thread safety
+3. There is one version of the cache per interpreter (*i.e.*, the cache is thread local)
+
+There are arguments in favor of each. Of them, (3) would
+require additional class to be added (*e.g.*, via the `immutable` module)
+which provides "interpreter local" dictionary variable that can be safely
+accessed by whichever interpreter is currently calling the immutable function.
+We have chosen (1) in order to provide clear feedback to the programmer that
+they likely do not want to freeze a function which has a (necessarily) mutable
+decorator or other object attached to it. It is likely not possible to make
+all decorators work via a general mechanism, but providing some tools to
+provide library authors with the means to provide a better experience for
+immutable decorators is in scope for a future PEP building on this work.
+
+Deferred Ideas
+==============
+
+Copy-on-Write
+-------------
+
+It *may* be possible to enforce immutability through copy-on-write.
+Such a system would not raise an exception on ``x.f = y`` when
+``x`` points to an immutable object, but rather copy the contents
+of ``x`` under the hood. Essentially, ``x.f = y`` turns into ``x =
+deep_copy(x); x.f = y``. While it is nice to avoid the error, this
+can also have surprising results (e.g. loss of identity of ``x``),
+is less predictable (suddenly the time needed to execute ``x.f = y``
+becomes proportional to the object graph rooted in ``x``) and may
+make code harder to reason about. 
+
+
+Typing
+------
+
+Support for immutability in the type system is worth exploring in
+the future. Especially if Python adopts an ownership model that
+enables reasoning about aliasing, see `Data-Race Free Python`_
+below.
+
+Currently in Python, ``x: Foo`` does not give very strong
+guarantees about whether ``x.bar(42)`` will work or not, because
+of Python's strong reflection support that permits changing a
+class at run-time, or even changing the type of an object.
+Making objects immutable in-place exacerbates this situation as
+``x.bar(42)`` may now fail because ``x`` has been made immutable.
+However, in contrast to failures due to reflective changes of
+a class, a ``NotFreezableError`` will point to the place in the
+code where the object was frozen. This should facilitate debugging.
+
+In short: the possibility of making objects immutable in-place
+does not weaken type-based reasoning in Python on a fundamental
+level. However, if immutability becomes very frequently used, it
+may lead to the unsoundness which already exists in Python's current
+typing story surfacing more frequently. As alluded to in the
+future work on `Data-Race Free Python`_, this can be mitigated by
+using region-based ownership.
+
+There are several challenges when adding immutability to a type
+system for an object-oriented programming language. First, self
+typing becomes more important as some methods require that self is
+mutable, some require that self is immutable (e.g. to be
+thread-safe), and some methods can operate on either self type.
+The latter subtly needs to preserve the invariants of immutability
+but also cannot rely on immutability. We would need a way of
+expressing this in the type system. This could probably be done by
+annotating the self type in the three different ways above --
+mutable, immutable, and works either way.
+
+A possibility would be to express the immutable version of a type
+``T`` as the intersection type ``immutable & T`` and a type that
+must preserve immutability but may not rely on it as the union
+of the immutable intersection type with its mutable type
+``(immutable & T) | T``.
+
+Furthermore, deep immutability requires some form of "view-point
+adaption", which means that when ``x`` is immutable, ``x.f`` is
+also immutable, regardless of the declared type of ``f``.
+View-point adaptation is crucial for ensuring that immutable
+objects treat themselves correctly internally and is not part of
+standard type systems (but well-researched in academia).
+
+Making ``freeze`` a soft keyword as opposed to a function `has
+been proposed
+<https://discuss.python.org/t/adding-deep-immutability/92011/71>`_
+to facilitate flow typing. We believe this is an excellent
+proposal to consider for the future in conjunction with work on
+typing immutability.
+
+
+Naming
+======
+
+We propose to call deep immutability simply "immutability". This
+is simple, standard, and sufficiently distinguishable from other
+concepts like frozen modules. 
+
+We also propose to call the act of making something immutable
+"freezing", and the function that does so ``freeze()``. This is
+the same as used in JavaScript and Ruby and is considerably
+snappier than ``make_immutable()`` which we suspect would be
+immediately shortened in the community lingo. The major concern
+with the freeze verb is that immutable objects risk being referred
+to as "frozen" which then comes close to frozen modules (bad link)
+and types like ``frozenset`` (good link).
+
+While naming is obviously important, the names we picked initially
+in this PEP are not important and can be replaced. A good short
+verb for the action seems reasonable. Because the term immutable
+is so standard, we should think twice about replacing it with
+something else.
+
+Qualifying immutability and freezing with an additional "deep" (as
+proposed `here
+<https://discuss.python.org/t/adding-deep-immutability/92011/6>`_)
+seems like adding extra hassle for unclear gains.
+
+
 Future Extensions
 =================
 
@@ -770,19 +989,20 @@ This PEP is the first in a series of PEPs with the goal of delivering
 a Data-Race Free Python that is theoretically compatible with, but 
 notably not contigent on, `PEP 703`_.
 
-This work will take place in the following discrete steps:
+This work has three different components which we intend to
+package into two discrete PEPs (called A and B below):
 
 1. Support for identifying and freeing cyclic immutable garbage
-   using reference counting.
+   using reference counting. (PEP A)
 2. Support for sharing immutable data across subinterpreters using
    atomic reference counting of immutable objects to permit
-   concurrent increments and decrements on shared object RC's.
+   concurrent increments and decrements on shared object RC's. (PEP A)
 3. Support for sharing mutable data across subinterpreters, with
-   dynamic ownership protecting against data races.
-4. Package all of the above into "Data-Race Free Python"
+   dynamic ownership protecting against data races. (PEP B)
 
-Note that each step above adds something which is directly useful
-to Python even before a subsequent step is taken.
+Together these components deliver "Data-Race Free Python".
+Note that "PEP A" has value even if "PEP B" would not materialise
+for whatever reason.
 
 
 Simplified Garbage Collection for Immutable Object Graphs
@@ -874,6 +1094,18 @@ is to make it impossible for Python programs to have data races.
 Support for deeply immutable data is the first important step
 towards this goal.
 
+The region-based ownership that we propose can be used to restrict
+freezing to only be permitted on regions which are isolated. If
+such a restriction is built into the system, then there will be a
+guarantee that freezing objects will not turn affect references
+elsewhere in the system (they cannot exist when the region is
+isolated). Such a design can also be used to track immutability
+better in a type system and would be able to deliver a guarantee
+that a reference of a mutable type never points to an immutable
+object, and conversely. These points will be unpacked and made
+more clear in the PEP for the ownership model.
+
+
 
 Reference Implementation
 ========================
@@ -885,7 +1117,7 @@ implementation, including:
 
 - The ``isfreezable(obj)`` function is not yet implemented.
 - The ``NotFreezable`` type is currently freezable (but inheriting
-  from it stops instances of the inheriting class from being frozen). 
+  from it stops instances of the inheriting class from being made immutable). 
 
 
 Rebasing on Python 3.14
@@ -896,9 +1128,17 @@ We have found two areas that need to be addressed to integrate this work with "f
 Data-representation for immutability
 ------------------------------------
 
-With free-threaded Python the representation of the reference count has been changed.  We could either borrow a bit to represent if an object is frozen, or alternatively, we could use the new `ob_tid` field to have a special value for immutable state.  Using `ob_tid` would allow for standard mutable thread local objects to remain the fast path, and is our preferred alternative.
+With free-threaded Python the representation of the reference
+count has been changed. We could either borrow a bit to represent
+if an object is immutable, or alternatively, we could use the new
+`ob_tid` field to have a special value for immutable state. Using
+`ob_tid` would allow for standard mutable thread local objects to
+remain the fast path, and is our preferred alternative.
 
-The extensions use use SCC calculations to detect cycles in immutable graphs, would require additional state.  Repurposing `ob_tid` and `ob_ref_shared` would allow sufficient space for the necessary calculation.
+The extensions use use SCC calculations to detect cycles in
+immutable graphs, would require additional state. Repurposing
+`ob_tid` and `ob_ref_shared` would allow sufficient space for the
+necessary calculation.
 
 Data-races during freeze
 ------------------------
@@ -909,11 +1149,32 @@ We consider the following races
 - Freezing some objects concurrently with another thread mutating those objects.
 - Freezing some objects concurrently with another thread freezing those objects.
 
-To address the first race, we need to consider strictness of deep immutability.  We need to ensure that querying an object graph for immutability only says yes if it is deeply immutable. This requires a two step immutable state: immutable but not strict, and then immutable and strict. On a DFS traversal of the object graph items are marked as immutable but not strict on the pre-order step, and then immutable and strict on the post-order step.  To query if a graph is immutable, we will require the "immutable and strict" state.
+To address the first race, we need to consider strictness of deep
+immutability. We need to ensure that querying an object graph for
+immutability only says yes if it is deeply immutable. This
+requires a two step immutable state: immutable but not strict, and
+then immutable and strict. On a DFS traversal of the object graph
+items are marked as immutable but not strict on the pre-order
+step, and then immutable and strict on the post-order step. To
+query if a graph is immutable, we will require the "immutable and
+strict" state.
 
-Handling mutation during freeze can use the mutex added by free-threading. There are some cases where mutation does not require the acquisition of a mutex, which would no longer allowed with this feature.  Freezing would be required to lock the object, marks it as immutable, release the lock, and then read all its fields.
+Handling mutation during freeze can use the mutex added by
+free-threading. There are some cases where mutation does not
+require the acquisition of a mutex, which would no longer allowed
+with this feature. Freezing would be required to lock the object,
+marks it as immutable, release the lock, and then read all its
+fields.
 
-The final case is the most complex detecting parallel freezing of an object graph.  We will consider this an error.  This error can be detected as follows.  If we encounter an object that is "immutable but not strict", then this should be on the path to the current object from the starting point of the freeze.  If this is not the case, then we must be observing another thread freezing an object graph.  The algorithm should back out the pending aspects of freeze, and raise an exception to the user.  This can naturally be integrated with the SCC algorithm. 
+The final case is the most complex detecting parallel freezing of
+an object graph. We will consider this an error. This error can be
+detected as follows. If we encounter an object that is "immutable
+but not strict", then this should be on the path to the current
+object from the starting point of the freeze. If this is not the
+case, then we must be observing another thread freezing an object
+graph. The algorithm should back out the pending aspects of
+freeze, and raise an exception to the user. This can naturally be
+integrated with the SCC algorithm.
 
 
 References
