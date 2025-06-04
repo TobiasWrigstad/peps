@@ -812,10 +812,10 @@ Hashing
 =======
 
 Deep immutability opens up the possibility of any freezable object being
-hashable, due to its pointer being a stable, unique integer associated
-with the object for its entire post-freeze lifetime. However, there are
-several complications which should be kept in mind for any future PEPs
-which build on this work at add this functionality.
+hashable, due to the fixed state of the object graph making it possible to compute
+stable hash values over the graph as is the case with `tuple` and `frozenset` . However,
+there are several complications (listed below) which should be kept in mind for any future
+PEPs which build on this work at add hashability for frozen objects:
 
 Instance versus Type Hashability
 --------------------------------
