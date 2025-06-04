@@ -866,7 +866,7 @@ potential approaches:
 1. The cache is frozen in its state at the point when freeze is called.
 Cache misses will result in an immutability exception.
 2. Access to the cache is protected by a lock to ensure thread safety
-3. There is one version of the cache per interpreter
+3. There is one version of the cache per interpreter (*i.e.*, the cache is thread local)
 
 There are arguments in favor of each. Of them, (3) would
 require additional class to be added (*e.g.*, via the `immutable` module)
