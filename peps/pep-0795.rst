@@ -18,9 +18,19 @@ Abstract
 ========
 
 This PEP proposes adding a mechanism for deep immutability to
-Python. The mechanism requires some changes to the core language,
-but user-facing functions are delivered in a module called
-``immutable``. This module provides the following functions and types:
+Python. Our main motivation for wanting to add immutability to
+Python is to facilitate concurrent programming, both using
+free-threaded Python and subinterpreters. The immutability this
+PEP proposes will make it possible for subinterpreters to share
+immutable objects by reference. In free-threaded Python, it will
+be possible to avoid some object locking overhead when interacting
+with immutable objects, although we are not proposing to do the
+optimisations for free-threaded Python as part of this PEP.
+
+The mechanism requires some changes to the core language, but
+user-facing functions are delivered in a module called
+``immutable``. This module provides the following functions and
+types:
 
 1. The function ``freeze(obj)`` -- turns ``obj`` deeply immutable
 
@@ -77,19 +87,6 @@ Immutability in action:
 
 Motivation
 ==========
-
-Ensuring Data Integrity
------------------------
-
-Python programs frequently manipulate large, interconnected data
-structures such as dictionaries, lists, and user-defined objects.
-Unintentional mutations can introduce subtle and
-difficult-to-debug errors. By allowing developers to explicitly
-freeze objects and their transitive dependencies, Python can
-provide stronger correctness guarantees for data processing
-pipelines, functional programming paradigms, and API boundaries
-where immutability is beneficial.
-
 
 Immutable Objects can be Freely Shared Without Risk of Data Races
 -----------------------------------------------------------------
@@ -150,6 +147,39 @@ section. As highlighted above, immutability also has value in single-threaded
 application, i.e. where there is no fear of data races.
 
 
+Sharing Objects by Reference Across Subinterpreters
+---------------------------------------------------
+
+The subinterpreters model relies on the subinterpreters being
+isolated: to share an object, the object must be pickled and send
+to the other subinterpreter. Furthermore, each subinterpreter
+contains its own module state, including types. This programming
+model is warranted by the fact that each subinterpreter uses a GIL
+to ensure that it can manipulate reference counts atomically, and
+that its GC will only encounter objects created by that
+subinterpreter.
+
+The immutability that this PEP proposes will make it possible
+for subinterpreters to share immutable objects directly by
+reference, which is a big performance benefit.
+
+This change requires modules loaded in one subinterpreter to be
+accessible from another.
+
+
+Ensuring Data Integrity
+-----------------------
+
+Python programs frequently manipulate large, interconnected data
+structures such as dictionaries, lists, and user-defined objects.
+Unintentional mutations can introduce subtle and
+difficult-to-debug errors. By allowing developers to explicitly
+freeze objects and their transitive dependencies, Python can
+provide stronger correctness guarantees for data processing
+pipelines, functional programming paradigms, and API boundaries
+where immutability is beneficial.
+
+
 Optimisations and Caching Benefits
 ----------------------------------
 
@@ -162,6 +192,107 @@ enable compiler optimisations that rely on immutability
 assumptions. This PEP will permit such opportunities to go
 beyond today's immutable objects (like ``int``, ``string``) and
 *shallow* immutable objects (``tuple``, ``frozenset``).
+
+
+The Big Picture
+===============
+
+Note: this text goes far beyond what this PEP intends to deliver,
+in order to clarify and motivate some of our design decisions.
+There are lots of details left out below, including a discussion
+about escape hatches, etc. These will be addressed in the next
+PEP.
+
+This PEP builds towards a data-race free programming model for
+Python. What we envision beyond this PEP is a Python that does not
+permit concurrent mutation, meaning it should not be possible for
+two threads to mutate an object at the same time. The same
+property falls out of properly synchronised programs, but poorly
+synchronised programs may contain data races that silently corrupt
+data, or crashes the the interpreter. We want such programs to
+raise exceptions instead to avoid these errors and also point
+programmers to how to fix them. Ensuring that a program is
+properly synchronised is hard, and debugging things like data
+races is often very challenging.
+
+The way we propose to enforce data-race freedom is through the
+ability to create groups of mutable objects which we call
+*regions*. Regions are *isolated*, which we for now will define as
+"objects inside the region only point to other objects inside the
+same region". We will relax this shortly, once we get around to
+introduce more of the moving pieces. For now, all objects in a
+Python program belong to some region.
+
+A region is owned by a thread and unless a thread owns a region,
+it cannot access the objects inside it. If you want to share a
+region between threads it must be wrapped inside a lock, which
+ensures that only one thread at a time owns the region. Trying to
+release a lock for a region while hanging on to direct references
+into the region throws an exception. (Otherwise, two threads could
+end up mutating the same object at the same time.) In the rest of
+this section, ”lock” refers to a lock object that manages the
+ownership of a single region. (It is possible to extend this model
+with a read-write lock which permits multiple threads to read
+objects at the same time, but not mutate them.)
+
+The immutable objects that this PEP proposes are safe to share
+across different threads (or subinterpreters) without leading to
+concurrent mutation. As the purpose of regions is to coordinate
+access to mutable objects, immutable objects cannot live in
+regions. Furthermore, objects in regions are permitted to
+reference immutable objects. In the regions model, we believe that
+immutable objects are a great way for regions to share common
+data. One example of common data is *types*.
+
+If regions are isolated, and isolation means that all pointers in
+an object point to other objects in the same region, then since an
+object has a pointer to its type, the type must reside in the same
+region. That's quite restrictive, and probably not what you want
+in a program that makes heavy use of regions for concurrency. One
+way around this is to make the type immutable.
+
+To simplify this process, we propose that certain types of objects
+should be possible to make immutable implicitly. For example, as
+soon as a type object becomes shared between two regions, we make
+it immutable. Objects that seem sensible to freeze implicitly
+include types, strings, tuples, and numbers.
+
+Regions with locks add an escape mechanism to immutability that
+this PEP does not discuss. Freezing does not propagate through
+locks. Thus, if a programmer wants an immutable object to contain
+some mutable state — for example, a counter inside an immutable
+class that counts how many instances it has, they can achieve this
+by sticking a lock with a region inside in the immutable class to
+hold the counter.
+
+When an object is created, it lives in the "default region" of the
+current thread. This is essentially a thread-local storage which
+also contains all the stack frames of that thread. Variables and
+objects in the default region are permitted to point into the
+regions that the thread owns. This means that objects are
+thread-local when created.
+
+Objects live in the default region until some other region creates
+a reference to that object. Then the object will be moved from the
+default region into the other region. (This operation may
+propagate if the moved object contains a reference into the
+default region.) Moving an object out of a region other than a
+default region is supported but is slightly more involved. (It
+involves disconnecting the object or objects to be moved from the
+remaining objects in the region.) A region can be merged into
+another region and regions can also be nested.
+
+Slide 9–17 in our presentation from the May 2025 Python Language
+Summit (available `here
+<https://wrigstad.com/summit-presentation-final.pdf>`__ show
+examples of (much of) the above, which minimal code in order to
+fit on the slides. A recording of this presentation is available
+`here
+<https://uppsala.box.com/s/h8gqp59alucov86l8auespvhgz6phiq3>`__. It
+should be pointed out that the ``move`` and ``share`` keywords
+used in the presentation were mock syntax that was invented for
+that presentation. (This is why they are typeset in comic sans.)
+
 
 
 Specification
@@ -240,6 +371,13 @@ wishes to support immutability needs updating. The downside of the
 opt-in model is that a large part of all Python libraries cannot
 be (even nominally) made immutable (out-of-the-box).
 
+Because immutability is deep, and concerns have been raised about
+the propagation of deep immutability, we propose an opt-in model.
+Unless a type is explicitly declared as supporting freezing by its
+author, or white-listed by a user, instances of that type cannot
+be frozen (and attempts to freezing such instances will raise an
+exception).
+
 
 Strictness
 ----------
@@ -248,12 +386,65 @@ A strict interpretation of deep immutability does not permit an
 immutable object to reference a mutable object. This model is both
 easy to explain and understand, and an object's immutability can
 be "trusted" --- it is not possible for an immutable object to
-change through some nested mutable state [#RC]_. At the same time
-it limits the utility of freezing as many Python objects contain
-types outside of the standard library defined in C, which must
-opt-in immutability before they can be frozen.
+change through some nested mutable state [#RC]_. This is key to
+being able to leverage immutability to share objects directly
+across subinterpreters or avoid per-object locking on immutabile
+objects. At the same time it limits the utility of freezing
+"out-of-the box" when support for immutability is opt-in.
 
 This PEP proposes immutability to be strict.
+
+
+Escape Hatches for Strictness
+'''''''''''''''''''''''''''''
+
+In `The Big Picture`_ above, we described how locks and regions
+can be used to store mutable data inside an immutable object.
+This PEP does not add regions, however, we can use thread-local
+storage in a similar way (yet). Consider the following class:
+
+.. code-block:: Python
+
+  class Foo:
+      _count = 0  # Class-level counter
+
+      def __init__(self):
+          type(self)._count += 1  # Increment counter on instance creation
+
+      @classmethod
+      def instance_count(cls):
+          return cls._count
+
+If we freeze the ``Foo`` type object, ``Foo()`` will fail with an
+exception, because the field ``type(self)._count`` cannot be
+updated. To store mutable data in the frozen ``Foo`` type, we
+can hide it behind a thread-local indirection. Here is an updated
+``Foo`` class that does this:
+
+.. code-block:: Python
+
+  import threading
+
+  class Foo:
+      _local = threading.local()  # thread-local storage
+
+      def __init__(self):
+          if not hasattr(self._local, 'count'):
+              self._local.count = 0
+          self._local.count += 1
+
+      @classmethod
+      def instance_count(cls):
+          return getattr(cls._local, 'count', 0)
+
+Note that this solution is not entirely satisfactory, as there is
+no way to get hold of all threads' instance counts. (Regions will
+permit this, though.) However, this solution is good enough to
+implement things like per-thread caching.
+
+Note that when running on subinterpreters, a thread-local storage
+of mutable objects will be kept on the subinterpreter that
+contains the thread.
 
 
 Dealing with Failure During Freezing
@@ -267,21 +458,22 @@ an object graph. Consider the object graph ``o1 --> o2 --> o3``
 where ``o1`` and ``o3`` can be made immutable, but ``o2`` cannot.
 What are the possible behaviours of ``freeze(o1)``?
 
-1. Freeze fails partially. All subgraphs which could be made
-   immutable entirely remain immutable. Remaining objects remain
-   mutable. In our example, ``o3`` remains immutable but ``o1`` and
-   ``o2`` remain mutable. This preserves strict immutability. The
-   exception thrown by the failing ``freeze(o1)`` call will
-   contain ``o2`` (the place that caused freezing to fail) and
-   ``o1`` (the object in the graph that holds on to the failing
-   object) to facilitate debugging.
-
-2. **Rejected alternative**: Freeze fails completely. In the strict
+1. Freeze fails completely. This is better than a partial fail
+   when support for immutability is opt-in. In the strict
    interpretation of deep immutability, freezing ``o1`` is not
    possible because ``o1`` contains a reference to an un-freezable
    object ``o2``. In this scenario, the object graph ``o1 --> o2
    --> o3`` remains mutable and ``freeze(o1)`` raises an exception
    when the object graph traversal encounters ``o2``.
+
+2. **Rejected alternative**: Freeze fails partially. All subgraphs
+   which could be made immutable entirely remain immutable.
+   Remaining objects remain mutable. In our example, ``o3``
+   remains immutable but ``o1`` and ``o2`` remain mutable. This
+   preserves strict immutability. The exception thrown by the
+   failing ``freeze(o1)`` call will contain ``o2`` (the place that
+   caused freezing to fail) and ``o1`` (the object in the graph
+   that holds on to the failing object) to facilitate debugging.
 
 3. **Rejected alternative**: Freeze succeeds by altering the
    graph. In this example removing ``o2`` from the graph or
@@ -302,7 +494,7 @@ What are the possible behaviours of ``freeze(o1)``?
    the implementation, and also for the user.
 
 This PEP proposes following alternative 1, where freezing either
-succeeds or fails partially.
+succeeds completely or fails completely.
 
 
 New Obligations on C Extensions
@@ -444,6 +636,10 @@ above, the ``freeze(obj)`` function works as follows:
     * The ``__bases__`` chain in classes (freezing a class freezes its
       base classes).
 
+   Note that references to thread-local storage (``_thread._local``)
+   are permitted, and are not followed. This permits objects behind a
+   thread-local indirection in an immutable object to stay mutable.
+
 5. Attempting to mutate an immutable object raises a type error
    with a self-explanatory message.
 
@@ -492,27 +688,30 @@ the small integer cache. This should be properly investigated.)
 Consequences of Deep Freezing
 =============================
 
-* The most obvious consequence of deep freezing is that it can lead
-  to surprising results when programmers fail to reason correctly
-  about the object structures in memory and how the objects reference
-  each other. For example, consider ``freeze(x)`` followed by
-  ``y.f = 42``. If the object in ``x`` can reach the same object that
-  ``y`` points to, then, the assignment will fail. **Mitigation:** To
-  facilitate debugging, exceptions due to attempting to mutate immutable
-  objects will include information about on what line an object was made
-  immutable.
+* The most obvious consequence of deep freezing is that it can
+  lead to surprising results when programmers fail to reason
+  correctly about the object structures in memory and how the
+  objects reference each other. For example, consider
+  ``freeze(x)`` followed by ``y.f = 42``. If the object in ``x``
+  can reach the same object that ``y`` points to, then, the
+  assignment will fail. **Mitigation:** Support for freezing is
+  opt-in. Further, to facilitate debugging, exceptions due to
+  attempting to mutate immutable objects will include information
+  about on what line an object was made immutable.
 
 * Class Freezing: Freezing an instance of a user-defined class
-  will also freeze its class. Otherwise, sharing an immutable object
-  across threads would lead to sharing its *mutable* type object. Thus,
-  freezing an object also freezes the type type object of its super
-  classes. This means that any metaprogramming or changes to a class
-  must happen before a class is made immutable. **Mitigation:** An immutable class
-  can be extended and its behaviour overridden through normal object-oriented
-  means. If neccessary, it is possible to add an option to make a mutable
-  copy of immutable objects and classes, which could then be changed.
-  Mutable instances of an immutable class can have their classes changed
-  to the mutable copy by reassigning ``__class__``.
+  will also freeze its class. Otherwise, sharing an immutable
+  object across threads would lead to sharing its *mutable* type
+  object. Thus, freezing an object also freezes the type type
+  object of its super classes. This means that any metaprogramming
+  or changes to a class must happen before a class is made
+  immutable. **Mitigation:** An immutable class can be extended
+  and its behaviour overridden through normal object-oriented
+  means. If neccessary, it is possible to add an option to make a
+  mutable copy of immutable objects and classes, which could then
+  be changed. Mutable instances of an immutable class can have
+  their classes changed to the mutable copy by reassigning
+  ``__class__``.
 
 * Metaclass Freezing: Since class objects have metaclasses,
   freezing a class may propagate upwards through the metaclass
@@ -521,16 +720,18 @@ Consequences of Deep Freezing
   mitigation for this, and we are also not aware of major problems
   stemming from this design.
 
-* Global State Impact: Although we have not seen this during our
-  later stages of testing, it is possible that freezing an object that references
-  global state (e.g., ``sys.modules``, built-ins) could
-  inadvertently freeze critical parts of the interpreter.
-  **Mitigation:** Avoiding accidental freezing is possible by
-  inheriting from (or storing a pointer to) the ``NotFreezable``
-  class. Also, when the Python interpreter is exiting, we make all
-  immutable objects mutable to facilitate a clean exit of the
-  interpreter. Also note that it is not possible to effectively
-  disable module imports by freezing.
+* **The following no longer applies as freezing support is opt-in.
+  However, we keep the text here as the meaning of simply removing
+  it is less clear.** Global State Impact: Although we have not
+  seen this during our later stages of testing, it is possible, it
+  is possible that freezing an object that references global state
+  (e.g., ``sys.modules``, built-ins) could inadvertently freeze
+  critical parts of the interpreter. **Mitigation:** Avoiding
+  accidental freezing is possible by inheriting from (or storing a
+  pointer to) the ``NotFreezable`` class. Also, when the Python
+  interpreter is exiting, we make all immutable objects mutable to
+  facilitate a clean exit of the interpreter. Also note that it is
+  not possible to effectively disable module imports by freezing.
 
 As the above list shows, a side-effect of freezing an object is
 that its type becomes immutable too. Consider the following program,
@@ -582,8 +783,7 @@ CPython classes hold references to their subclasses. If
 immutability it taken literally, it would not be permitted to
 create a subclass of an immutable type. Because this reference
 does not get exposed to the programmer in any dangerous way, we
-permit immutable classes to be subclassed (by mutable classes). C.f.
-`Sharing Immutable Data Across Subinterpreters`_.
+permit immutable classes to be subclassed (by mutable classes). 
 
 
 Freezing Function Objects
@@ -729,6 +929,61 @@ Changes to the internal API
 * ``_PyImmutability_IsFreezable``
 
 
+Simplified Garbage Collection for Immutable Object Graphs
+---------------------------------------------------------
+
+In `previous work <https://dl.acm.org/doi/10.1145/3652024.3665507>`_,
+we have identified that objects that make up cyclic immutable
+garbage will always have the same lifetime. This means that a
+single reference count could be used to track the lifetimes of
+all the objects in such a strongly connected component (SCC).
+
+As part of freezing, we perform an SCC analysis that creates a
+designated (atomic) reference count for every SCC created as part
+of freezing the object graph. Reference count manipulations on any
+object in the SCC is "forwarded" to that shared reference count.
+This can be done without bloating objects by repurposing the
+existing reference counter data to be used as a pointer to the
+shared counter.
+
+This technique permits handling cyclic garbage using plain
+reference counting, and because of the single reference count
+for an entire SCC, we will detect when all the objects in the
+SCC expire at once.
+
+Because immutable objects no longer need to participate in cycle
+detection, we can remove the frozen objects from the "GC work
+list" after freezing. In free-threaded Python this off-loads the
+GC, but in subinterpreters it is crucial to permit direct object
+sharing, since each subinterpreter assumes that it has its own
+work list, and that no changes can happen to the objects in the
+work list when GC is running. When objects are shared directly
+between subinterpreters, this no longer holds. Our solution is
+to remove the objects from the work lists when they are frozen,
+and added back when their RC drops to zero.
+
+This approach requires (re-purposing) a second bit in the object
+header.
+
+
+Atomic Reference Counting for Immutable Objects
+-----------------------------------------------
+
+As a necessary requirement for `Sharing Objects by Reference Across Subinterpreters`_,
+we must add support for atomic reference counting for immutable objects.
+
+When immutable data is shared across threads we must ensure that
+concurrent reference count manipulations are correct, which in
+turns requires atomic increments and decrements. Note that since
+we are only planning to share immutable objects across different
+GIL's, it is *not* possible for two threads to read--write or
+write--write race on a single field. Thus we only need to protect
+the reference counter manipulations, avoiding most of the
+complexity of :pep:`703` (which is what opens the door to
+optimisations). For further details, see `Requirements for Direct
+Object Sharing with Subinterpreters`_ below.
+
+
 Performance Implications
 ========================
 
@@ -780,6 +1035,20 @@ More Rejected Alternatives
        logic and/or temporal interactions which can be hard to
        test and reproduce.
 
+6. Enforcing immutability only through types. While we very much
+   like types, the Python type system currently does not have the
+   mechanisms needed to express immutability. Furthermore, the
+   Python type system is not very strict and programmers can
+   actively or accidentally ignore immutability. This is incompatible
+   with sharing immutable objects across subintereters. See further
+   under `Requirements for Direct Object Sharing with Subinterpreters`_.
+
+7. Don't strictly enforce immutability -- permit programmers to
+   actively or accidentally break immutability. This is
+   incompatible with sharing immutable objects across
+   subintereters. See further under `Requirements for Direct
+   Object Sharing with Subinterpreters`_.
+
 Another rejected idea was to provide a function ``isfreezable(obj)`` which
 returns ``True`` if all objects reachable from ``obj`` can be made
 immutable. This was rejected because free-threaded Python permits
@@ -787,6 +1056,154 @@ data-races during freezing. This means that the result of the check
 can be non-deterministic. A better way is to simply try to make
 an object immutable and catch the exception if the object could not
 be frozen.
+
+
+Requirements for Direct Object Sharing with Subinterpreters
+-----------------------------------------------------------
+
+The subinterpreters model currently relies on the subinterpreters
+being isolated: to share an object it must be pickled and sent
+across. This programming model is warranted by the fact that each
+subinterpreter uses a GIL to ensure that it can manipulate
+reference counts atomically, and that its GC will only encounter
+objects created by that subinterpreter.
+
+Unpacking Subinterpreter Isolation
+''''''''''''''''''''''''''''''''''
+
+We now unpack the statements above further with an example. Assume
+that we were able to directly share an object ``O`` by reference
+across two subinterpreters, and that both subinterpreters call a
+function ``F`` on ``O``. Now, both subinterpreters will execute
+something like the following::
+
+  _tmp = O.F # get a reference to the function object for F
+  _tmp.RC += 1 # increase the reference count on the function object
+  _tmp(…) # call the F function
+  _tmp.RC -= 1 # decrease the reference count
+
+If we zoom in on the first reference count operation, it really
+looks something like this::
+
+  _tmp_rc = _tmp.RC
+  _tmp_rc = _tmp_rc + 1
+  _tmp.RC = _tmp_rc
+
+That is to say that this operation is not atomic. Both
+subinterpreters use their own GIL to ensure that no other thread
+on the same subinterpreter is able to mess with this critical
+section. However, since they use different GILs, they do not
+synchronise with *each other*. Let us assume that the reference
+count of ``O.F`` is 1. For clarity, we suffixe the ``_tmp``
+variable with ``_1`` or ``_2`` to denote the different variables
+on the different subinterpreters and prefix each line by ``(1)`` or
+``(2)``. It is possible that the two subinterpreters effectively
+execute their statements in the following global order::
+
+  (1) _tmp_rc_1 = _tmp.RC # _tmp_rc_1 holds 1
+  (1) _tmp_rc_1 = _tmp_rc_1 + 1 # _tmp_rc_1 holds 2
+  (2) _tmp_rc_2 = _tmp.RC # _tmp_rc_2 holds 1
+  (2) _tmp_rc_2 = _tmp_rc_2 + 1 # _tmp_rc_2 holds 2
+  (1) _tmp.RC = _tmp_rc_1 # writes 2 into _tmp.RC
+  (2) _tmp.RC = _tmp_rc_2 # writes 2 into _tmp.RC
+
+As the example above demonstrates, because both subinterpreters
+read the same initial reference count from ``O.F``, one increment
+gets lost. Since Python decrements the function’s reference count
+after the call, this might bring the refence count down to zero
+(unless we suffer the same race coming back and drop one decrement
+too).
+
+The situation above is not a "freak accident" but actually quite
+likely to happen because reference count manipulations happen so
+frequently.
+
+Does atomic reference counting fix the problem?
+'''''''''''''''''''''''''''''''''''''''''''''''
+
+In short: no. The problem with incorrect reference counting above
+can be solved with atomic reference counting (in the sense that
+the ``_tmp.RC += 1`` operations are atomic), but this happens to
+be the case only because both threads are reading. (There is also
+an additional problem with respect to cycle detection that we will
+return to later.) To illustrate why atomic reference counting does
+not work in all cases, we must look at a different example: two
+subinterpreters share an object ``O``, where one writes to the field
+``O.F`` at the same time as the other reads ``O.F``.
+
+Subinterpreter 1 does::
+
+  O.F = y
+
+Subinterpreter 2 does::
+
+  x = O.F
+
+Like before, let’s zoom into what happens in Python due to these
+two statements:
+
+Subinterpreter 1::
+
+  y.RC += 1
+  _tmp = O.F
+  O.F = y
+  _tmp.RC -= 1
+
+Subinterpreter 2::
+
+  x = O.F
+  x.RC += 1
+
+Let us assume that the reference count manipulations have been
+made atomic, so there are no problems there. Further assume that
+the reference count of ``O.F`` is 1 from the start. Here is a
+situation that could occur, again writing statements in temporal
+order, and prefixing each line by ``(1)`` or ``(2)`` to show which
+subinterpreter is running.
+
+::
+
+  (1) y.RC += 1
+  (1) _tmp = O.F
+  (2) x = O.F # x is a valid pointer here
+  (1) O.F = y
+  (1) _tmp.RC -= 1 # here O.F’s RC hits zero, O.F is deallocated, and x is no longer valid
+  (2) x.RC += 1 # this write can write to something that is not an RC, and corrupt the heap (use-after-free)
+
+The example above shows that even though the reference count
+manipulations were atomic, the program ended up writing a value
+into memory which could be in the middle of a newly allocated
+object etc. If we ran the above example in free-threaded Python,
+it would avoid the use-after-free by the per-object locks that
+ensures that ``x = O.F`` cannot happen before ``O.F = y``.
+
+By enforcing immutability rather than relying on programmer
+discipline, we can be sure that the 2nd example (the read-write
+race on ``O.F``) will not happen — it will result in an exception
+being thrown due to ``O`` being immutable, rather than ending up
+in a use-after-free. Thus, from a reference counting standpoint,
+we can safely share immutable objects across subinterpreters as
+long as we ensure that reference count manipulations on immutable
+objects are atomic, which is what this PEP proposes.
+
+
+Dealing with cycle detection in subintereters
+'''''''''''''''''''''''''''''''''''''''''''''
+
+Now to the foreshadowed additional problem with cycle detection.
+Each subinterpreter expects to be able to manage its own heap in
+isolation. Every Python object is part of a doubly-linked list
+which is used by the GC. When we start sharing objects across
+subinterpreters, concurrent mutation could lead to a
+subinterpreter’s list to be corrupted. Free-threaded Python avoids
+concurrent mutation corrupting this list by switching out Python’s
+allocator and relying on mimalloc’s heap walk. In this PEP, we
+address the problem by removing frozen objects from cycle
+detection altogether. This will not leak memory because we can use
+a clever trick where each strongly connected component of
+immutable objects can be managed by a single reference counter.
+Thus, we retain the possibility of detecting cycles in immutable
+garbage without the need to trace the immutable objects.
 
 
 A Note on Modularisation
@@ -1015,16 +1432,15 @@ something else.
 
 Qualifying immutability and freezing with an additional "deep" (as
 proposed `here
-<https://discuss.python.org/t/adding-deep-immutability/92011/6>`_)
+<https://discuss.python.org/t/adding-deep-immutability/92011/6>`__)
 seems like adding extra hassle for unclear gains.
 
 
 Future Extensions
 =================
 
-This PEP is the first in a series of PEPs with the goal of delivering
-a Data-Race Free Python that is theoretically compatible with, but
-notably not contigent on :pep:`703`.
+This PEP is the first PEP in the strive to deliver the data-race
+free Python that what was described in `The Big Picture`_. 
 
 This work has three different components which we intend to
 package into two discrete PEPs (called A and B below):
@@ -1043,66 +1459,6 @@ Together these components deliver "Data-Race Free Python".
 Note that "PEP A" has value even if "PEP B" would not materialise
 for whatever reason.
 
-
-Simplified Garbage Collection for Immutable Object Graphs
----------------------------------------------------------
-
-In `previous work <https://dl.acm.org/doi/10.1145/3652024.3665507>`_,
-we have identified that objects that make up cyclic immutable
-garbage will always have the same lifetime. This means that a
-single reference count could be used to track the lifetimes of
-all the objects in such a strongly connected component (SCC).
-
-We plan to extend the freeze logic with a SCC analysis that
-creates a designated (atomic) reference count for the entire
-SCC, such that reference count manipulations on any object in
-the SCC will be "forwarded" to that shared reference count.
-This can be done without bloating objects by repurposing the
-existing reference counter data to be used as a pointer to
-the shared counter.
-
-This technique permits handling cyclic garbage using plain
-reference counting, and because of the single reference count
-for an entire SCC, we will detect when all the objects in the
-SCC expire at once.
-
-This approach requires a second bit. Our `reference implementation`_
-already steals this bit in preparation for this extension.
-
-
-Support for Atomic Reference Counting
--------------------------------------
-
-As a necessary requirement for the extension `Sharing Immutable Data Across Subinterpreters`_,
-we will add support for atomic reference counting for immutable objects. This
-will complement work in `Simplified Garbage Collection for Immutable Object Graphs`_,
-which aims to make memory management of immutable data more efficient.
-
-When immutable data is shared across threads we must ensure that
-concurrent reference count manipulations are correct, which in turns
-requires atomic increments and decrements. Note that since we are only
-planning to share immutable objects across different GIL's, it is
-*not* possible for two threads to read--write or write--write race
-on a single field. Thus we only need to protect the reference counter
-manipulations, avoiding most of the complexity of :pep:`703`.
-
-
-Sharing Immutable Data Across Subinterpreters
----------------------------------------------
-
-We plan to extend the functionality of multiple subinterpreters in :pep:`734`
-to *share* immutable data without copying. This is safe and
-efficient as it avoids the copying or serialisation when
-objects are transmitted across subinterpreters.
-
-This change will require reference counts to be atomic (as
-discussed above) and the subclass list of a type object to
-be made thread-safe. Additionally, we will need to change
-the API for getting a class' subclasses in order to avoid
-data races.
-
-This change requires modules loaded in one subinterpreter to be
-accessible from another.
 
 
 Data-Race Free Python
