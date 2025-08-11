@@ -476,7 +476,8 @@ can only reference other immutable objects).
 .. figure:: pep-0795/diagram_4.svg
 
    **Figure 4:** Before freezing ``d`` – immutable objects drawn in “ice
-   blue” and references from immutable objects drawn in blue.
+   blue” with dashed borders and references from immutable objects drawn
+   with thicker blue lines.
 
 Note that the instance of ``Die`` pointed to by ``d`` is a normal
 mutable Python object. Thus we are allowed to change the number of sides
@@ -488,8 +489,9 @@ variable to change. However, as indicated by the blue reference arrow,
 
 .. figure:: pep-0795/diagram_5.svg
 
-   **Figure 5:** Right after freezing ``d`` – immutable objects drawn in
-   “ice blue” and references from immutable objects drawn in blue.
+   **Figure 5:** Right after freezing ``d`` – immutable objects drawn in “ice
+   blue” with dashed borders and references from immutable objects drawn
+   with thicker blue lines.
 
 Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj`` and
 for convenience also returns a reference to (now immutable) ``obj``.
