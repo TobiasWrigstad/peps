@@ -25,11 +25,15 @@ can be turned into an immutable object. We refer to the act
 of making a freezable object immutable as “freezing it”.
 There is no way to make an immutable object mutable again.
 However, one can make a mutable copy of an immutable object.
+Immutability is tracked by a bit in the object header. We
+will use one more bit to handle cyclic immutable garbage.
+Both these can be added without increasing the size of the
+object header.
 
 From now on, we will use immutable to mean deeply immutable, and use
 **shallow immutability** to mean the protection offered by tuples and
-frozen sets in Python 3.14. For example, ``(42, (4711, None))`` is
-deeply immutable, but ``(42, [4711, None])`` is only shallowly
+frozen sets in Python 3.14. For example, ``(42, ("Spam", None))`` is
+deeply immutable, but ``(42, ["Spam", None])`` is only shallowly
 immutable, because the list constructor creates a mutable object.
 
 Motivation
@@ -59,10 +63,10 @@ The motivation for immutability is four-fold:
    between sub-interpreters without needing substantial changes to cycle
    detection.
 
-In this PEP, we strive to create a semantics for immutable objects that
-is consistent across both sub-interpreters and free-threaded Python.
-This is a difficult problem as sub-interpreters rely on isolation plus a
-per-interpreter GIL for correctness, whereas free-threading has no GIL.
+In this PEP, we strive to create a semantics for immutable
+objects that is consistent across both sub-interpreters
+and free-threaded Python (and sub-interpreters
+running free-threaded). 
 
 In a future PEP, we will propose a scheme for sharing *mutable* objects
 by reference across sub-interpreters. There is a short note about this
@@ -74,7 +78,7 @@ About the structure of this PEP
 This PEP describes three stages of immutability support in Python. Each
 stage permit more objects to be immutable. Permitting more objects to be
 immutable requires more changes to the Python interpreter, and
-additionally come with design considerations at the language level.
+additionally comes with design considerations at the language level.
 While we foresee no technical problems with getting to the third stage
 already in Python 3.15, discussions at DPO prompted the split of this
 PEP into stages to clarify the “return on investement” for each step and
@@ -83,11 +87,14 @@ give the Python community more time to get accustomed to immutability.
 At a high-level, the three stages are:
 
 1. Objects and types which are de-facto immutable in Python 3.14 are
-   immutable according to this PEP
+   immutable according to this PEP. Examples include tuples that only
+   contain immutable objects, strings, numbers, booleans, and `None`.
 2. Extend immutability to user-defined types and their instances – but
    no “monkey patching” of types (e.g. adding and removing methods, or
-   class variables)
-3. Permit monkey patching of types before they become immutable
+   class variables). Instances of user-defined types will be freezable,
+   meaning they will be mutable at creation but may be made immutable.
+3. Permit monkey patching of types before they become immutable. This
+   stage permits freezable type objects.
 
 This PEP is a complete rewrite of the original PEP after `discussions on
 DPO <https://discuss.python.org/t/pep-795-add-deep-immutability-to-python/96014>`__
@@ -119,6 +126,9 @@ contributed to this PEP.
 
 Design considerations due to sub-interpreters
 ---------------------------------------------
+
+**TODO** Shorten this considerably, and move the rest to appendix.
+Explain that we are going to use atomic RC for immutables.
 
 Because this PEP makes immutable objects directly sharable across
 sub-interpreters, the design is influenced by constraints in the
@@ -227,8 +237,6 @@ mutable data or support some limited form of mutation. This will be
 supported through escape hatches which are described `further down in
 this document <Escape hatches>`_.
 
-This section proceeds by introducing three stages of increasing support
-for making objects immutable, where each stage builds on the previous.
 
 Stage 1 – inherently immutable objects
 --------------------------------------
@@ -237,9 +245,11 @@ In stage 1, we align the deep immutability of this PEP with the shallow
 immutability in Python. All types that are immutable in Python 3.14 are
 also deeply immutable in the sense of this PEP. Further, all instances
 of ``int``, ``float``, ``str``, ``complex``, and ``bool`` and the
-``None`` constant are deeply immutable. Instances of composite objects
-like ``tuple``, named tuple, ``frozenset``, ``range`` and ``slice`` are
-deeply immutable if their nested objects are deeply immutable.
+``None`` constant are deeply immutable. Instances of
+**shallowly immutable** composite objects like ``tuple``,
+named tuple, ``frozenset``, ``range`` and ``slice``
+are deeply immutable if their nested objects are deeply
+immutable.
 
 In this stage, immutability is always established at the point of
 creation, which means that there is no need for an operation that takes
@@ -307,7 +317,7 @@ under the assumption that the objects traversed by its cycle detector
 are not mutated by program threads while the cycle detector is running.
 While making it impossible to have immutable cycles is limiting the
 power of immutability, it avoids a technical problem in memory
-management.
+management. Stage 2 and 3 permits cycles.
 
 Summary
 ~~~~~~~
@@ -328,14 +338,17 @@ Stage 2 adds support for immutable user-defined types and function
 objects and freezable instances of user-defined types. Instances of
 immutable types are freezable, meaning they are mutable, but can be made
 immutable by freezing them through an explicit call to a ``freeze()``
-function. We also make the types ``list`` and ``dict`` immutable and
-their instances freezable, meaning lists and dicts are mutable on
-creation but can be made immutable later.
+function. We also make the types ``list``, ``dict``, and
+``set`` immutable and their instances freezable, meaning
+lists and dicts are mutable on creation but can be made
+immutable later.
 
 An immutable function is a normal function that can be
 passed both mutable and immutable arguments, and is free
 to mutate any mutable arguments -- but it may not capture a
 reference to mutable state as part of the function object.
+Making a function immutable does not prevent optimisations
+etc. which rely on mutating the code object.
 
 An immutable type may not capture mutable state, and additionally does
 not permit adding, removing or changing functions. Immutable types may
@@ -343,10 +356,11 @@ not inherit from mutable types, but may have mutable subtypes.
 
 Further down in this document, we will discuss escape hatches that relax
 the restrictions on capturing mutable state in functions and types. Note
-that while we did not discuss immutable types and functions much in
-stage 1, they already exist there, but since these are functions that
-are part of core Python, it is easy to ensure that these are
-well-behaved with respect to this PEP.
+that while we did not discuss immutable functions much in
+stage 1, they already exist there as part of the immutable type objects.
+Since those functions in those types  are part of core
+Python, it is easy to ensure that these are well-behaved
+with respect to this PEP.
 
 With freezable objects and a ``freeze()`` function comes the issue of
 *freeze propagation*, meaning what freezable objects can be made
@@ -355,10 +369,11 @@ propagation, an object graph can only be made immutable if it is
 **self-contained**, meaning there are no references into the object
 graph from outside the object graph, except the reference passed to
 ``freeze()``. For example, ``freeze(x)`` below will fail because of the
-reference to ``D`` in ``y``. However, if that reference is removed, or
-if ``D`` was already immutable, ``freeze(x)`` will succeed. Note the
+reference to ``C`` in ``y``. However, if that reference is removed, or
+if ``C`` was already immutable, ``freeze(x)`` will succeed. Note the
 cycle between A and B – immutable are no longer neccessarily tree
-shaped.
+shaped. (The constraint of only freezing self-contained object
+graphs was added due to comments from DPO discussions.)
 
 .. figure:: pep-0795/diagram_3.svg
    
@@ -428,7 +443,7 @@ implicitly declared ``@immutable`` as well.
        def set_sides(self, sides):
            self.sides = sides
        def roll(self):
-           # Clunky but just to illustrate that this is OK
+           # Importing a mutable module is OK
            import random
            return random.randint(1, self.sides)
 
@@ -479,9 +494,21 @@ variable to change. However, as indicated by the blue reference arrow,
 Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj`` and
 for convenience also returns a reference to (now immutable) ``obj``.
 
-A note on immutable functions is in order. An immutable function that
-captures variables from an enclosing scope will not prevent reassigning
-those variables, but the function will not be affected:
+Immutable functions
+~~~~~~~~~~~~~~~~~~~
+
+As explained above, that a function is immutable means that it
+is safe to share across subinterpreters. This means that the function
+may not capture a direct reference to mutable state. The function may
+be passed mutable state, and may even get access to mutable state through
+module imports -- this is all permitted.
+
+To limit the side-effects of freezing a function, we decouple any
+captured variable inside a function from its defining scope at the
+point of freezing. In the code below, you can witness how freezing
+the ``foo`` function effectively gives ``foo`` its own copy of the
+``x`` variable, which initially shares its value with the enclosing
+``x``:
 
 .. code-block:: python
    :caption: **Listing 4:**
@@ -496,6 +523,10 @@ those variables, but the function will not be affected:
    x = 4711 # OK
    print(x) # prints 4711
    foo() # returns 42
+
+This design ensures that freezing ``foo`` will not effect the
+module in which foo is designed.
+
 
 .. _summary-1:
 
@@ -2161,8 +2192,6 @@ implementation detail, and then exposed to Python through the
 Atomic reference counting
 -------------------------
 
-Note: This section does not apply to free-threaded Python.
-
 As a necessary requirement for directly sharing objects across
 sub-interpreters, reference counts for immutable objects must be managed
 with atomic operations. This is handled in the reference counting macro
@@ -2171,8 +2200,6 @@ if the bit it set.
 
 Management of immutable objects
 -------------------------------
-
-Note: This section does not apply to free-threaded Python.
 
 When objects are made immutable, we remove them from the heap of their
 creating interpreter. This is done by unlinking them from the GC work
