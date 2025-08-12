@@ -16,14 +16,17 @@ Deep Immutability for Efficient Sharing and Concurrency Safety
 ==============================================================
 
 This PEP proposes support for deeply immutable objects in Python. This
-PEP distinguishes between objects which are **mutable**, **deeply
-immutable**, or **freezable**. Mutable objects can be updated and
+PEP partitions all objects into two categories: **mutable** and **deeply
+immutable**. Mutable objects can be updated and
 reference both mutable and deeply immutable objects. Deeply immutable
 objects cannot be updated, and may only point to other deeply immutable
-objects. A freezable objects is like a mutable objects except that it
+objects. A mutable object can also be freezable, meaning that it
 can be turned into an immutable object. We refer to the act
-of making a freezable object immutable as “freezing it”.
-There is no way to make an immutable object mutable again.
+of making a freezable object immutable as “freezing it”, and
+we will often say "freezable object" to mean a mutable object that
+is also freezable.
+
+There is no way to make an immutable object mutable.
 However, one can make a mutable copy of an immutable object.
 Immutability is tracked by a bit in the object header. We
 will use one more bit to handle cyclic immutable garbage.
@@ -179,12 +182,12 @@ or crash the Python VM.
 Semantics of immutability
 =========================
 
-This PEP distinguishes between objects which are **mutable**,
-**immutable**, or **freezable**. Mutable objects can be updated and
-reference both mutable and immutable objects. Immutable objects cannot
-be updated, and may only point to other immutable objects. Freezable
-objects behave like mutable objects until they are frozen; after that
-point they become immutable objects.
+This PEP partions objects into the categories **mutable**
+and  **immutable**. Mutable objects can be updated and
+reference both mutable and immutable objects. Immutable
+objects cannot be updated, and may only point to other
+immutable objects. Mutable objects can also be **freezable**
+meaning they can be turned into immutable objects.
 
 Sometimes it may be necessary for an immutable object to point to
 mutable data or support some limited form of mutation. This will be
@@ -206,7 +209,7 @@ immutable.
 
 In this stage, immutability is always established at the point of
 creation, which means that there is no need for an operation that takes
-a mutable object and makes it immutable (this is necessary in stage 2
+a mutable object and makes it immutable (this becomes possible in stage 2
 and 3).
 
 
@@ -292,7 +295,7 @@ immutable types are freezable, meaning they are mutable, but can be made
 immutable by freezing them through an explicit call to a ``freeze()``
 function. We also make the types ``list``, ``dict``, and
 ``set`` immutable and their instances freezable, meaning
-lists and dicts are mutable on creation but can be made
+lists, dicts and sets are mutable on creation but can be made
 immutable later.
 
 An immutable function is a normal function that can be
@@ -2093,7 +2096,8 @@ Implementation
 ==============
 
 We will use two bits as flags per Python object: the first will be used
-to track immutability; the second will be used by the SCC algorithm.
+to track immutability; the second will be used by the SCC algorithm that
+permits us to :ref:`manage cyclic immutable garbage without a cycle detector <scc>`.
 This will be done without extending the size of the Python object
 header.
 
@@ -2158,6 +2162,8 @@ creating interpreter. This is done by unlinking them from the GC work
 list that all objects participate in. If the object ever becomes
 garbage, it will be added back to its creating interpreter, which will
 handle cleanup and finalization.
+
+.. _scc:
 
 Dealing with cycles in immutable object graphs
 ----------------------------------------------
