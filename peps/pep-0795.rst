@@ -1694,56 +1694,50 @@ it at the end:
 Immutability out-of-the-box
 ---------------------------
 
-This PEP proposes that all types which are already immutable in CPython
-are made PEP795-immutable and shared across sub-interpreters. For
-clarity, these are:
+Stage 1 of this PEP proposes that all types which have the ``Py_TPFLAGS_IMMUTABLETYPE`` flag
+and which are considered immutable for hashability will be automatically made PEP795-immutable,
+either in all cases or if constructed from PEP795-immutable objects. In the
+case of the core language and standard library, these types consist of the following:
+- ``int``
+- ``float``
+- ``True``, ``False``
+- ``complex``
+- ``str``,
+- ``bytes``
+- ``memoryview``
+- ``range``
+- ``slice``
+- ``None``
+- ``decimal.Decimal``
+And if constructed from PEP795-immutable objects:
+- ``tuple``,
+- ``namedtuple``
+- ``frozenset``
+No additional work is required on the part of the programmer to take advantage of
+the immutability of these objects, our immutability simply extends the properties of
+these objects to allow sharing across subinterpreters without need for pickling or
+copying.
 
--  **TODO** @MattJ
--  ``int``
--  ``float``
--  ``bool``
--  ``complex``
--  ``str``
--  ``bytes``
--  ``tuple`` (if all elements are themselves immutable)
--  ``frozenset``
--  ``range``
--  ``slice``
--  ``dict``
--  ``list``
--  ``NoneType`` (``type(None)``)
--  ``ellipsis`` (``type(...)``)
--  ``NotImplementedType`` (``type(NotImplemented)``)
--  ``code`` (``types.CodeType``)
--  ``function`` (``types.FunctionType``)
--  ``builtin_function_or_method`` (``types.BuiltinFunctionType``)
--  ``method_descriptor`` (e.g. ``str.upper``)
--  ``wrapper_descriptor`` (e.g. ``int.__add__``)
--  ``member_descriptor`` (e.g. ``__slots__`` members)
--  ``staticmethod``
--  ``classmethod``
--  ``property``
--  ``type``
--  ``function``
--  ``object``
+Stage 2 will expand this list to collections and (via the `@immutable` decorator)
+various hashable Python types, including:
+- ``dict``
+- ``list``
+- ``set``
+- ``collections.defaultdict``
+- ``collections.deque``
+- ``array.array``
+- ``ctypes`` (existing and programmer derived)
+- ``xml.etree.ElementTree.Element``
+- ``fraction.Fraction``
+- ``ipaddress.IPv4Address``, ``ipaddress.IPv4Interface``, ``ipaddress.IPv6Address``, ``ipaddress.IPv6interface``
+- ``uuid.UUID``
+Whereas some of these will be like the types above and simply immutable at creation (*e.g.*, ``decimal.Decimal``)
+others will require object instances to be marked as immutable (*e.g.*, all the collections).
 
-In addition to these, the following types should support immutability
-out-of-the-box:
-
--  **TODO** @MattJ
--  ``fractions.Fraction``
--  …
--  ``threading.Lock``
--  ``threading.RLock``
--  ``threading.Semaphore``
--  ``threading.Condition``
--  functools stuff… LRU cachhe
--  meta classes like ABCMeta
-
-Permitting lock objects to be immutable is key to permit concurrent
-sub-interpreters to coordinate their actions. While this is not
-necessary to avoid data races (modulo shared fields), it may be needed
-to correctly capture the intended program logic.
+Stage 3 consists of changes to many types in the standard library to make them
+amenable to being made immutable. In particular, the use of mutable objects on
+the type object (*e.g.*, caching objects) will be modified to be either shared or
+interpreter local. However, no further types are made immutable by default.
 
 The ``immutable`` library
 =========================
@@ -2241,8 +2235,6 @@ since the program is effectively racing with the garbage collector.
 New Obligations on C Extensions
 -------------------------------
 
-**TODO** @MattJ -- is the below still correct?
-
 As immutability support must be opted in, there are no *obligations* for
 C extensions that do not want to add support for immutability.
 
@@ -2304,8 +2296,6 @@ Changes to the internal API
 Mapping changes to stages
 -------------------------
 
-**TODO** @MattJ -- please check if this seems right
-
 Stage 1
 ~~~~~~~
 
@@ -2333,7 +2323,6 @@ Stage 3
 -  make_module_shared
 -  import_as_shared
 -  @freezable and @unfreezable
--  make certain types and objects immutable
 -  sharing of immutable module objects
 
 Future extensions and considerations
