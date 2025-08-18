@@ -20,7 +20,7 @@ PEP partitions all objects into two categories: **mutable** and **deeply
 immutable**. Mutable objects can be updated and
 reference both mutable and deeply immutable objects. Deeply immutable
 objects cannot be updated, and may only point to other deeply immutable
-objects. A mutable object can also be freezable, meaning that it
+objects. A mutable object can also be **freezable**, meaning that it
 can be turned into an immutable object. We refer to the act
 of making a freezable object immutable as “freezing it”, and
 we will often say "freezable object" to mean a mutable object that
@@ -72,8 +72,9 @@ and free-threaded Python (and sub-interpreters
 running free-threaded). 
 
 In a future PEP, we will propose a scheme for sharing *mutable* objects
-by reference across sub-interpreters. There is a short note about this
-at the end of this document.
+by reference across sub-interpreters, using region-based ownership to
+enforce the envariants necessary for safety. There is a
+short note about this at the end of this document.
 
 About the structure of this PEP
 -------------------------------
@@ -2297,8 +2298,9 @@ Stage 1
 - Deeply immutable objects are not added to the cycle
   detector work lists on creation.
 
-**TODO** Point out that we do not need to freeze dicts
-yet.
+Note that we do not freeze dicts in stage 1. This is not
+needed until stage 2 to support user-defined types.
+
 
 Stage 2
 ~~~~~~~
@@ -2315,6 +2317,10 @@ Stage 2
   Python. In particular, dictionaries, lists, and sets
   are updated to perform ``Py_CHECKWRITE`` calls in the
   appropriate places.
+- Add additional synchronisation for updating the code
+  objects of function objects due to optimisations in the
+  interpreter. (Such synchronisation is already in place
+  in free-threaded Python.)
 - Make weak references freezable.
 
 
