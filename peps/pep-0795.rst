@@ -1657,6 +1657,7 @@ Stage 1 of this PEP proposes that all types which have the ``Py_TPFLAGS_IMMUTABL
 and which are considered immutable for hashability will be automatically made PEP795-immutable,
 either in all cases or if constructed from PEP795-immutable objects. In the
 case of the core language and standard library, these types consist of the following:
+
 - ``int``
 - ``float``
 - ``True``, ``False``
@@ -1668,17 +1669,21 @@ case of the core language and standard library, these types consist of the follo
 - ``slice``
 - ``None``
 - ``decimal.Decimal``
+
 And if constructed from PEP795-immutable objects:
+
 - ``tuple``,
 - ``namedtuple``
 - ``frozenset``
+
 No additional work is required on the part of the programmer to take advantage of
 the immutability of these objects, our immutability simply extends the properties of
 these objects to allow sharing across subinterpreters without need for pickling or
 copying.
 
-Stage 2 will expand this list to collections and (via the `@frozen` decorator)
+Stage 2 will expand this list to collections and (via the ``@frozen`` decorator)
 various hashable Python types, including:
+
 - ``dict``
 - ``list``
 - ``set``
@@ -1690,6 +1695,7 @@ various hashable Python types, including:
 - ``fraction.Fraction``
 - ``ipaddress.IPv4Address``, ``ipaddress.IPv4Interface``, ``ipaddress.IPv6Address``, ``ipaddress.IPv6interface``
 - ``uuid.UUID``
+
 Whereas some of these will be like the types above and simply immutable at creation (*e.g.*, ``decimal.Decimal``)
 others will require object instances to be marked as immutable (*e.g.*, all the collections).
 
@@ -2130,6 +2136,8 @@ While the ``freeze(obj)`` function is available to Python programmers in
 the immutable module, the actual freezing code has to live inside core
 Python. This is for three reasons:
 
+.. _freeze_in_core:
+
 -  The core object type needs to be able to freeze just-in-time
    dictionaries created by its accessors when the object itself is
    immutable.
@@ -2238,8 +2246,11 @@ using ``Py_CHECKWRITE`` or ensure that all accesses to this data is
 *thread-safe* and that it does not cause a mutable object from one
 sub-interpreter to become accessible to another sub-interpreter.
 
+
 Changes to the C ABI
 --------------------
+
+**TODO** Should be fleshed out
 
 -  ``Py_CHECKWRITE``
 -  ``_Py_IsImmutable``
@@ -2248,6 +2259,8 @@ Changes to the C ABI
 Changes to the internal API
 ---------------------------
 
+**TODO** Should be fleshed out
+
 -  ``_PyType_HasExtensionSlots(PyTypeObject*)`` – determines whether a
    type object adds novel functionality in C
 -  ``_PyNotFreezable_Type``
@@ -2255,37 +2268,63 @@ Changes to the internal API
 -  ``_RegisterFreezable``
 -  ``_PyImmutability_IsFreezable``
 
+
 Mapping changes to stages
 -------------------------
+
+**NOTE** This section and subsections is WIP
+
+With respect to changes to core Python, stage 2 and 3 are
+almost identical. Stage 3 contains some additional features in
+the immutable library that do not affect core Python, plus
+minimal changes to make the module type object immutable and
+module objects freezable. The list below show the changes to
+core Python:
+
 
 Stage 1
 ~~~~~~~
 
--  is_frozen
--  the immutable types shared across interpreters
--  sharing immutable objects across interpreters
--  atomic RC for immutable objects
--  remove immutable objects from sub-interpreter heap (and put back)
--  disabled
--  make certain types and objects immutable
+- Steal single bit in object header for the mutable /
+  deeply immutable flag.
+- Ensure that all types which are made deeply immutable
+  satisfy the invariants necessary for sharing. Any data
+  inside these types must be deeply immutable or managed as
+  laid out in the escape hatches.
+- RC manipulating macros are updated with a branch for
+  deeply immutable objects where RC manipulations use
+  atomic operations.
+- Deeply immutable objects are not added to the cycle
+  detector work lists on creation.
+
+**TODO** Point out that we do not need to freeze dicts
+yet.
 
 Stage 2
 ~~~~~~~
 
--  scc
--  freeze function
--  @frozen
--  shared and local fields
--  make certain types and objects immutable
+- Steal one more bit in object header needed to
+  distinguishing between RC and a pointer to object in the SCC
+  that holds the common RC for the entire SCC.
+- The freeze function (which must be implemented in core
+  Python for the reasons outlined :ref:`here <freeze_in_core>`).
+- All freezable Python objects must have calls to
+  ``Py_CHECKWRITE`` inserted on all paths to mutation to
+  be able to stop attempts at mutating deeply immutable
+  objects. This requires changes in XX places in core
+  Python. In particular, dictionaries, lists, and sets
+  are updated to perform ``Py_CHECKWRITE`` calls in the
+  appropriate places.
+- Make weak references freezable.
+
 
 Stage 3
 ~~~~~~~
 
--  NotFreezable
--  make_module_shared
--  import_as_shared
--  @freezable and @unfreezable
--  sharing of immutable module objects
+- Add ``Py_CHECKWRITE`` calls in the code that implements
+  the module type and module objects.
+- Making modules and standard types.
+
 
 Future extensions and considerations
 ====================================
@@ -2424,8 +2463,10 @@ in our prototype.
 TODOs
 =====
 
--  Do we cover C extensions enough?
--  Do we need a separate discussion about backwards compatibility?
--  We currently do not discuss builtins
--  We should discuss locks being morally immutable
--  What about libraries like math, random etc.?
+- Do we cover C extensions enough?
+- Do we need a separate discussion about backwards compatibility?
+- We currently do not discuss builtins
+- We should discuss locks being morally immutable
+- What about libraries like math, random etc.?
+
+
