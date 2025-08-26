@@ -61,10 +61,11 @@ The motivation for immutability is four-fold:
    for correct reference counting in free-threaded Python.
 4. Memory for immutable objects can be safely managed without leaks
    without cycle detection, even when there are cycles in the immutable
-   objects. This takes pressure off normal cycle detection in both
-   sub-interpreters and free-threading, and is key to sharing objects
+   objects. This is key to sharing objects
    between sub-interpreters without needing substantial changes to cycle
    detection.
+   The algorithm we use to perform this assumes that freezing an object
+   does not occur in parallel with concurrent mutation. 
 
 In this PEP, we strive to create a semantics for immutable
 objects that is consistent across both sub-interpreters
@@ -73,7 +74,7 @@ running free-threaded).
 
 In a future PEP, we will propose a scheme for sharing *mutable* objects
 by reference across sub-interpreters, using region-based ownership to
-enforce the envariants necessary for safety. There is a
+enforce the invariants necessary for safety. There is a
 short note about this at the end of this document.
 
 About the structure of this PEP
@@ -358,7 +359,7 @@ design is that it ensures that a mutable object will never
 "suddenly become immutable under foot”. After an object of
 type T has been made immutable, subsequent attempts to write
 to its fields will result in “TypeError: object of type T
-is immutable”.)
+is immutable”.
 
 As types and functions are freezable, they can be made
 immutable by passing them as arguments to ``freeze()``.
