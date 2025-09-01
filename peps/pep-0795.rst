@@ -146,7 +146,7 @@ Design considerations due to sub-interpreters
 ---------------------------------------------
 
 This PEP will enhance sub-interpreters so that immutable
-objects can be shared directly. This is possible because
+objects can be shared directly by reference between sub-interpreters. This is possible because
 immutability permits an object to safely forego isolation and
 be accessed outside of the protection offered by a single
 a GIL, and its memory managed safely using atomic reference
@@ -160,18 +160,12 @@ a rather strict interpretation of immutability, where the
 mutable and immutable “worlds” are kept apart. (Although see
 `Escape hatches`_.)
 
-// REVIEW: xFrednet: The previous paragraph makde little sense to me, probably
-// because it's missing an introduction scentence saying what it is about.
-// Maybe:
-
 Immutability is important to allow safe sharing between sub-interpreters.
 To illustrate this point, let's assume that it would be possible to
 share a mutable object O across two sub-interpreters (Sub 1 and
-Sub 2) each with their own GIL. Now Sub 1 uses its GIL to ensure
-that manipulations of object O are carried out correctly. However,
-Sub 2 also manipulates object O at the same time, which is assumed
-to be safe since it's holding its GIL. Since these GIL’s are different,
-operations that must be atomic may in fact not be.
+Sub 2) each with their own GIL. Because each sub-interpreter is
+only synchronising with its own GIL, they are not synchronising
+with each other.
 
 The picture below shows the situation above pictorially – the boxes
 labelled Sub 1 and Sub 2 show the heaps of sub-interpreters 1 and 2.
@@ -180,6 +174,13 @@ mutable and resides in the heap of Sub 2. A and B both point to an
 immutable shared object C. Note that object C
 does not belong to either sub-interpreter, which is why it is drawn
 outside of their heaps.
+
+.. figure:: pep-0795/diagram_1.svg
+
+   **Figure 1:** Illegal reference from immutable to mutable object. The
+   immutable object C is shared between two sub-interpreters, and keeps an
+   illegal reference to a mutable object on the heap of one of the
+   sub-interpreters.
 
 A sub-interpreter assumes that accesses to
 the objects in its heap are protected by its GIL. **Note that the reference
@@ -191,13 +192,6 @@ Because of the reference from C to D, it is possible to have two
 accesses relying on different GILs for correctness, meaning
 these accesses do not synchronise. This may silently corrupt
 or crash the Python VM.
-
-.. figure:: pep-0795/diagram_1.svg
-
-   **Figure 1:** Illegal reference from immutable to mutable object. The
-   immutable object C is shared between two sub-interpreters, and keeps an
-   illegal reference to a mutable object on the heap of one of the
-   sub-interpreters.
 
 
 Semantics of immutability
@@ -226,11 +220,7 @@ of ``int``, ``float``, ``str``, ``complex``, and ``bool`` and the
 **shallowly immutable** composite objects like ``tuple``,
 named tuple, ``frozenset``, ``range`` and ``slice``
 are deeply immutable if their nested objects are deeply
-immutable at the time of creating the composed object.
-
-// REVIEW: xFrednet: I wanted to clarify that this property of freezing a composite
-// object is only checked on creation. Meaning that later(stage 2) freezing all contained
-// objects will not automatically turn the collection immutable. Is that clear?
+immutable.
 
 In this stage, immutability is always established at the point of
 creation, which means that there is no need for an operation that takes
@@ -270,13 +260,10 @@ changes this PEP proposes.
 Sharing of types
 ~~~~~~~~~~~~~~~~
 
-// REVIEW: xFrednet: I don't understand the prevous start. Did you mean something
-// like this?
-
 To share an object it has to be deeply immutable, which includes the
 type object stored in the ``__class__`` reference. All types of the
 currently de-facto immutable objects are immutable and can therefore
-be safely shared across sub-interpreters while being consitent with
+be made safe to share across sub-interpreters while being consistent with
 the definition of deep immutability and not breaking existing code.
 
 .. figure:: pep-0795/diagram_2.svg
@@ -326,11 +313,9 @@ immutable by freezing them through an explicit call to a
 freezable, meaning lists, dicts and sets are mutable on
 creation but can be made immutable later. To make a type
 immutable immediately at creation time, a decorator
-``@frozen`` can be used.
-
-// REVIEW: xFrednet: If the decorator is only exposed from the
-// immutable module, we should probably clarify this. As is this
-// sounds like a change to the language.
+``@frozen`` can be used. The decorator, the ``freeze()``
+function, along with other utilies described later in this
+document are in a module called ``immutable``.
 
 An immutable function is a normal function that can be
 passed both mutable and immutable arguments. It is free
@@ -353,9 +338,9 @@ Since those functions in those types are part of core
 Python, it is easy to ensure that these are well-behaved
 with respect to this PEP.
 
-With freezable objects and ``freeze()`` and ``@frozen`` comes the issue of
+With freezable objects and ``freeze()`` and ``@frozen`` come the issue of
 *freeze propagation*, meaning what freezable objects can be made
-immutable as a side-effect of making something immutable. To limit freeze
+immutable as a side-effect of making something else immutable. To limit freeze
 propagation, an object graph can only be made immutable if it -- with the
 exception of the external reference to the root of the graph -- is
 **self-contained**, meaning there are no references into the object
@@ -369,6 +354,8 @@ to "declaration objects" such as types and function objects.
 (These limitations are not neccessary for any technical
 reasons. They were added as a response to comments in DPO
 discussions.)
+
+@TODO Tobias: add text about permitting incoming aliases above
 
 .. figure:: pep-0795/diagram_3.svg
    
@@ -506,12 +493,8 @@ To limit the side-effects of freezing a function, we decouple any
 captured variable inside a function from its defining scope at the
 point of freezing. In the code below, you can witness how freezing
 the ``foo`` function effectively gives ``foo`` its own copy of the
-``x`` variable, which initially shares its value with the enclosing
+``x`` *variable*, which initially shares its *value* with the enclosing
 ``x``:
-
-// TODO: I think the paragraph above should clarify if this ``own`` copy
-// is a copy to the object, or if x points to the same object. Currently
-// this is not clear
 
 .. code-block:: python
    :caption: **Listing 4:**
@@ -539,10 +522,8 @@ cannot turn a variable in a completely different scope
 into a constant.
 
 An object will always fail to freeze if it has a field
-``__freezable__`` with a value of ``False``. We provide a decorator
-``@unfreezable`` that inserts such a field in a declaration.
-
-// TODO: xFrednet: "We" meaning "Python" or "the immutable module"?
+``__freezable__`` with a value of ``False``. The ``immutable`` module
+provides a decorator ``@unfreezable`` that inserts such a field in a declaration.
 
 .. code-block:: python
    :caption: **Listing 5:** Examples of opting out of freezing.
@@ -594,7 +575,8 @@ permitted to propagate to the object regardless of the rules laid
 out in stage 2. This means that *freezing is permitted to propagate
 from objects to types and declarations, and back again,* and that
 *objects can be made immutable even if they have incoming
-references from objects that stay mutable*. Note that by normal
+references from objects that stay mutable* -- but only if programmers
+opt-in to these features. Note that by normal
 Python semantics, if a class ``C`` has ``C.__freezable__ == True``,
 that means that a subclasses ``D`` of ``C`` also has
 ``D.__freezable__ == True``, and furthermore an instance ``o`` of
@@ -779,10 +761,7 @@ propagates to the ``gcd`` function. The white-listing makes this
 legal, but the module could also have set ``__freezable__ = True``
 internally. Notably, ``__add__`` has a reference to ``Fraction``
 which would also have to be made immutable, but is already immutable
-in this example. (It’s becoming immutable is what causes
-``__add__`` to become immutable in the first place.)
-
-// TODO: xFrednet: I don't understand the last scentence in ()
+in this example.
 
 Note that the ``utils`` variable in the stack frame did not become
 immutable, although it is pointing to an immutable object. It is
@@ -1079,8 +1058,6 @@ only had immutable constants, this would have worked.
 Make the module stateless
 -------------------------
 
-// REVIEW: xFrednet: I've added the `__freezable__ = True` to these examples, do we want to keep this?
-
 We can refactor the module to become stateless:
 
 .. code-block:: python
@@ -1176,18 +1153,15 @@ hatch, are immutable.
     # Mark the module as freezable
     __freezable__ = True
 
-This module can now be made immutable without incapacitating it – the
+This module can now be made immutable without incapacitating it -- the
 ``messages`` variable will effectively remain mutable (through an
 indirection), and can be updated with new messages. This allows a single
 logger module instance to be used across all sub-interpreters. Locks from
 the standard library will support immutability to enable synchronization
 across sub-interpreters. This would be needed here to prevent races in the
 ``log`` and ``flush`` function. But these changes are related to standard
-concurrency and not specific to this PEP. On a
+concurrency and not specific to this PEP.
 
-// REVIEW: xFrednet: The previous text was incorrect, another sub-interpreter
-// would by default still import a new module with it's own state and not
-// grab the immutable module version from another sub-interpreter.
 
 Keep one logger per sub-interpreter
 -----------------------------------
@@ -1229,10 +1203,6 @@ sub-interpreter’s ``message`` list.
 
 Keep one logger per sub-interpreter – take 2
 --------------------------------------------
-
-// TODO: xFrednet: The ``immutable`` module is being mentioned again and again
-// but I can't remember reading an introduciton saying why we need it. I think
-// this should be realtivly early. (I haven't made any changes in this regard)
 
 We can achieve the same effects as above without changing the logger
 module, but instead change how we import it. Let’s first do that
@@ -1881,8 +1851,10 @@ the end of the block.
 TODO (stage 2 and 3)
 --------------------
 
-**NOTE: come up with good names** - ``make_module_shared`` -
-``import_as_shared``
+**NOTE: come up with good names**
+
+- ``make_module_shared``
+- ``import_as_shared``
 
 .. _frozen:
 
