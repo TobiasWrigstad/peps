@@ -1357,7 +1357,7 @@ object around without making it impossible to freeze.
    objects which may not be frozen.
 -  An object can be made impossible to freeze by setting
    ``__freezable__ = False``. A convenience decorator ``@unfreezable``
-   instals this field in declarations.
+   installs this field in declarations.
 
 **Immutability invariant:**
 
@@ -1430,9 +1430,9 @@ In stage 2 and 3, an object can become immutable if it satisfies *all* of the
 constraints below:
 
 - It is not unfreezable.
-- All the objects reachable from the object can become immutable (or have
-  been permitted to freeze), including classes and functions in classes.
-- Unless the object is strongly freezable, all references it are
+- All the objects reachable from the object can become immutable (or are
+  permitted to be freezen), including classes and functions in classes.
+- Unless the object is strongly freezable, all references it has are
   stored in objects being made immutable at the same time as the
   object, with the exception of the argument to the ``freeze``
   call.
@@ -1639,7 +1639,7 @@ There are two ways to freeze state:
 1. Explicitly declare it as ``@frozen`` (which first constructs it and then freezes it in one go)
 2. Explicitly call ``freeze`` on it
 
-(Techncially, it is also possible to call ``frozen`` as a function
+(Technically, it is also possible to call ``frozen`` as a function
 although that it not intended.)
 
 Because module objects opt-out of freezing by default, it should be
@@ -1702,7 +1702,7 @@ capture ``B`` because it sees that ``B`` is in the list of things which
 will be made immutable. (And if ``B`` would fail for some other reason, the
 effects of the entire call will be made undone.)
 
-For the same reason, we cannot make ``A`` and ``B`` ``@frozen``. Dealing
+For the same reason, we cannot mark ``A`` and ``B`` with ``@frozen``. Dealing
 with cyclic dependencies requires freezing to happen after all classes
 involved have been constructed.
 
