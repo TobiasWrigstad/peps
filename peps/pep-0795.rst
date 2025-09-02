@@ -1907,9 +1907,21 @@ is equivalent to
            def quux(self, a, b, c):
                pass
 
+// TODO:  Can we tell apart nested definitions from things defined outside, and placed here?
+//  @freezable
+//  class BazImpl:
+//     pass
+//  class Foo:
+//     Baz = BazImpl
+//
+//  There are slight difference in the names, and in the reference counts?
+//  Is that sufficient to do this reliably?
+
 The reason why the decoration does not propagate to ``Bar`` is because
 of technical limitations and a desire to keep complexity down. Any
 arguments to a decorator are propagated along with the decorator.
+
+// COMMENT (mjp): Bar is allocated freshly each time that code is run.
 
 Propagation can cause a declaration to become multiply decorated when an
 outer decorator is propagated to a nested declaration. The list below
@@ -1919,9 +1931,9 @@ and the rightmost the inner.
 -  ``@frozen`` + ``@frozen`` = ``@frozen``
 -  ``@frozen`` + ``@freezable`` = ``@frozen``
 -  ``@frozen`` + ``@unfreezable`` = raises exception
--  ``@freazable`` + ``@frozen`` = ``@frozen``
--  ``@freazable`` + ``@freezable`` = ``@freezable``
--  ``@freazable`` + ``@unfreezable`` = ``@unfreezable``
+-  ``@freezable`` + ``@frozen`` = ``@frozen``
+-  ``@freezable`` + ``@freezable`` = ``@freezable``
+-  ``@freezable`` + ``@unfreezable`` = ``@unfreezable``
 -  ``@unfreezable`` + ``@frozen`` = ``@frozen``
 -  ``@unfreezable`` + ``@freezable`` = ``@freezable``
 -  ``@unfreezable`` + ``@unfreezable`` = ``@unfreezable``
@@ -1964,6 +1976,25 @@ can be successfully made immutable.
        x.append(a)
        y.pop()
    freeze(foo) # succeeds
+
+// TODO(mjp): I am very unsure how to implement this?  Is 
+// this adding additional state to the function object such that if it is
+// frozen, then we check which variables it is accessing, and those don't have
+// to be "self-contained"?
+// Do I need this if the variables are no longer accessible by another path?
+//   def make_count():
+//      a = 0
+//      @freezable
+//      def inc():
+//        nonlocal a
+//        a += 1
+//        return a
+//      return inc
+//   c = make_count()
+//   c()
+//   freeze(c) # should this work?
+// Clearly calling c() again should fail.  But the a variable is only accessed
+// by a single rc at the point of freeze.
 
 The behaviour is the same, regardless of whether the variables captured
 are from globals or an enclosing frame.
