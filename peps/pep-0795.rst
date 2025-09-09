@@ -627,7 +627,8 @@ freezable by setting the ``__freezable__`` field to the value
 
    @freezable("monty") # white-listing monty
    class Person:
-       def __init__(self, name): # "inherits" @freezable("monty") from Person
+       @freezable
+       def __init__(self, name):
            self.name = name
            monty.append(self)
 
@@ -687,11 +688,13 @@ as shown by the example below.
            self.n = numerator // d
            self.d = denominator // d
 
+       @freezable
        def __add__(self, other):
            num = self.n * other.d + other.n * self.d
            den = self.d * other.d
            return Fraction(num, den)
 
+       @freezable
        def __repr__(self):
            return f"{self.n}/{self.d}"
 
@@ -1515,6 +1518,7 @@ succeeds:
    # showcase different way of supporting freezing
    @freezable
    class Foo:
+       @freezable
        def bar(self):
            self.variable = 42
            return self.variable
@@ -1890,12 +1894,61 @@ creation. It takes arguments similar to ``@freezable``. This
 decorator can be used to define a class or function that is
 immutable immediately after its definition has been evaluated.
 
-When used on a class, the decorators propagate to any directly nested
-declaration. For example,
+When used on a class, the ``@frozen`` decorator propagates to any
+directly nested declaration, but the ``@freezable`` decorator does
+not. For example,
+
+.. code-block:: python
+
+   @frozen
+   class Foo:
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+is equivalent to
+
+.. code-block:: python
+
+   @frozen
+   class Foo:
+       @frozen # from Foo
+       def frob(self, a, b, c):
+           @frozen # from Foo via frob
+           class Bar:
+               pass
+       @frozen # from Foo
+       class Baz:
+           @frozen # from Foo via Baz
+           def quux(self, a, b, c):
+               pass
+
+Since ``@freezable`` does not propagate,
 
 .. code-block:: python
 
    @freezable
+   class Foo:
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+does **not** make ``frob``, ``Bar``, ``Baz``, and ``quux``
+``@freezable``. However, note that ``freeze(Foo)`` will
+still work if what gets frozen as a result is self-contained.
+
+Note that white-listing can be used as an alternative to
+decorating the top-level contents of a class, so:
+
+.. code-block:: python
+
+   @freezable(frob", "Baz")
    class Foo:
        def frob(self, a, b, c):
            class Bar:
@@ -1910,55 +1963,23 @@ is equivalent to
 
    @freezable
    class Foo:
-       @freezable # from Foo
+       @freezable
        def frob(self, a, b, c):
            class Bar:
                pass
-       @freezable # from Foo
+       @freezable
        class Baz:
-           @freezable # from Foo via Baz
            def quux(self, a, b, c):
                pass
 
-| TODO:  Can we tell apart nested definitions from things defined outside, and placed here?
-|  @freezable
-|  class BazImpl:
-|     pass
-|  class Foo:
-|     Baz = BazImpl
-|
-|  There are slight difference in the names, and in the reference counts?
-|  Is that sufficient to do this reliably?
+Multiple decorators can be used in a nested fashion. If an
+``@freezable`` is used inside an ``@frozen``, the latter takes
+precedence and the result will be frozen. Using an ``@frozen``
+inside an ``@freezable`` will result in a freezable whose
+content are partially frozen.
 
-The reason why the decoration does not propagate to ``Bar`` is because
-of technical limitations and a desire to keep complexity down. Any
-arguments to a decorator are propagated along with the decorator.
-
-| COMMENT (mjp): Bar is allocated freshly each time that code is run.
-
-Propagation can cause a declaration to become multiply decorated when an
-outer decorator is propagated to a nested declaration. The list below
-explains what happens in this case. The leftmost is the outer decorator
-and the rightmost the inner.
-
--  ``@frozen`` + ``@frozen`` = ``@frozen``
--  ``@frozen`` + ``@freezable`` = ``@frozen``
--  ``@frozen`` + ``@unfreezable`` = raises exception
--  ``@freezable`` + ``@frozen`` = ``@frozen``
--  ``@freezable`` + ``@freezable`` = ``@freezable``
--  ``@freezable`` + ``@unfreezable`` = ``@unfreezable``
--  ``@unfreezable`` + ``@frozen`` = ``@frozen``
--  ``@unfreezable`` + ``@freezable`` = ``@freezable``
--  ``@unfreezable`` + ``@unfreezable`` = ``@unfreezable``
-
-For clarity, the first line means that two ``@frozen`` decorators is
-equivalent to a single ``@frozen`` decorator. Note that nesting
-something ``@unfreezable`` inside something that is ``@frozen`` raises
-an exception since this is not meaningful (the ``@unfreezable`` thing
-will not be reachable in the program so this is most likely an error).
-
-Arguments are always joined together, so if ``@frozen("a", "b")`` is
-nested inside ``@freezable("b", "c")``, the result is
+Arguments are always joined together, so if ``@frozen("a", "b")``
+is nested inside ``@freezable("b", "c")``, the result is
 ``@frozen("a", "b", "c")``.
 
 Decorator arguments – white listing to enable freeze propagation
@@ -1989,25 +2010,6 @@ can be successfully made immutable.
        x.append(a)
        y.pop()
    freeze(foo) # succeeds
-
-| TODO(mjp): I am very unsure how to implement this?  Is 
-| this adding additional state to the function object such that if it is
-| frozen, then we check which variables it is accessing, and those don't have
-| to be "self-contained"?
-| Do I need this if the variables are no longer accessible by another path?
-|   def make_count():
-|      a = 0
-|      @freezable
-|      def inc():
-|        nonlocal a
-|        a += 1
-|        return a
-|      return inc
-|   c = make_count()
-|   c()
-|   freeze(c) # should this work?
-| Clearly calling c() again should fail.  But the a variable is only accessed
-| by a single rc at the point of freeze.
 
 The behaviour is the same, regardless of whether the variables captured
 are from globals or an enclosing frame.
