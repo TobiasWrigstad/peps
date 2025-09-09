@@ -94,11 +94,6 @@ to immutability. It is also possible to only support the early
 stages if the further stages are perceived as too invasive.
 At a high-level, the three stages are:
 
-| TODO: xFrednet Is there some python documentation for the de-facto immutability?
-| It seems like this text is assuming that everyone knows that this is a thing and
-| what it means for the type to be immutable. I don't think we should explain this
-| but make sure there is a link somewhere.
-
 1. **Stage 1: Inherently Immutable Objects**.
    Objects and types which are `de-facto immutable`_ in Python 3.14 are
    immutable according to this PEP. Examples include tuples that only
@@ -119,13 +114,13 @@ At a high-level, the three stages are:
    Empower freezing to make objects immutable in the presence of
    references that can witness the change.
 
-_de-facto immutable: https://docs.python.org/3/glossary.html#term-immutable
-_data model documentation: https://docs.python.org/3/reference/datamodel.html
+.. _de-facto immutable: https://docs.python.org/3/glossary.html#term-immutable
+.. _data model documentation: https://docs.python.org/3/reference/datamodel.html
 
 This PEP is a complete rewrite of the original PEP after `discussions on
 DPO`_ and elsewhere. Based on feedback from DPO this rewrite:
 
-_discussions on DPO: <https://discuss.python.org/t/pep-795-add-deep-immutability-to-python/96014>
+.. _discussions on DPO: <https://discuss.python.org/t/pep-795-add-deep-immutability-to-python/96014>
 
 -  Focuses more on programming model, not just implementation details
 -  Aims to be clearer about what the costs are for different parts of
@@ -364,8 +359,6 @@ to "declaration objects" such as types and function objects.
 reasons. They were added as a response to comments in DPO
 discussions.)
 
-@TODO Tobias: add text about permitting incoming aliases above
-
 .. figure:: pep-0795/diagram_3.svg
    
    **Figure 3:** Explaining the meaning of self-contained object graphs in
@@ -379,6 +372,17 @@ design is that it ensures that a mutable object will never
 type T has been made immutable, subsequent attempts to write
 to its fields will result in “TypeError: object of type T
 is immutable”.
+
+Finally, it is possible to call ``freeze(x, y)`` to make
+the structure in Figure 3 immutable. This is slightly different
+from "first freeze ``y``, then freeze ``x``" -- this means freeze
+everything reachable from ``x`` and ``y`` at the same time,
+regardless of whether the structures overlap or not. Freezing
+with ``A`` as a starting point permits one incoming external
+reference to ``A`` (the ``x`` variable); freezing with ``C``
+as a starting point permits one incoming external reference
+to ``C`` (the ``y`` variable). As a result, freezing the entire
+structure is permitted despite the two incoming references.
 
 As types and functions are freezable, they can be made
 immutable by passing them as arguments to ``freeze()``.
@@ -1560,7 +1564,7 @@ A type can become immutable if it satisfies *all* of the constraints below:
 -  It is not unfreezable.
 -  All its supertypes are immutable or strongly freezable.
 -  Its namespace dictionary is immutable or can be frozen.
--  Its meta class either is or can become immutable. **TODO** Matt J to check please!
+-  Its meta class either is or can become immutable. **TODO** @MattJ to expand
 -  The type either does not contain any mutable class state, or that state
    is strongly freezable
 
@@ -2104,8 +2108,9 @@ kinds of errors will always be caught dynamically.
 For ``@frozen``, only the strict semantics is meaningful. For
 ``@freezable``, there are pros and cons with both.
 
-**TODO** make a decision before posting this PEP – maybe just use strict
-to keep complexity down? @MattJ @MattP @Fred
+We propose to go with the strict semantics because it is less complicated,
+but (on the downside) also slightly less permissive.
+
 
 Shared field (stage 2)
 ----------------------
@@ -2338,7 +2343,7 @@ existing cycle detection infrastructure (*i.e.*, implementation of
 ``tp_traverse`` and other elements as described documentation on
 `supporting cycle detection`_.
 
-_supporting cycle detection: https://docs.python.org/3/c-api/gcsupport.html#supporting-cycle-detection
+.. _supporting cycle detection: https://docs.python.org/3/c-api/gcsupport.html#supporting-cycle-detection
 
 Because our implementation builds on information available to the
 CPython cycle detector, types defined through C code will support
@@ -2632,7 +2637,7 @@ for immutability is provided in an (internal) ``immutability.h`` header and
 additional ``immutability.c`` file, though the C ABI macros and error function are
 defined in the appropriate public headers.
 
-_reference implementation: https://github.com/mjp41/cpython/tree/immutable-main
+.. _reference implementation: https://github.com/mjp41/cpython/tree/immutable-main
 
 Making various types in the core and the standard library freezable (and adding/augmenting
 tests) make up the majority of the other changes. We also expose the immutabiliity
