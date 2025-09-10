@@ -1564,7 +1564,7 @@ A type can become immutable if it satisfies *all* of the constraints below:
 -  It is not unfreezable.
 -  All its supertypes are immutable or strongly freezable.
 -  Its namespace dictionary is immutable or can be frozen.
--  Its meta class either is or can become immutable. **TODO** @MattJ to expand
+-  Its meta class either is or can become immutable. (We will expand on this at a later date.)
 -  The type either does not contain any mutable class state, or that state
    is strongly freezable
 
