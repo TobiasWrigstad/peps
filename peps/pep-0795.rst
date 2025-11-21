@@ -12,8 +12,8 @@ Post-History:
 Resolution:
 
 
-Deep Immutability for Efficient Sharing and Concurrency Safety
-==============================================================
+Abstract
+#############
 
 This PEP proposes support for deeply immutable objects in Python. This
 PEP partitions all objects into two categories: **mutable** and **deeply
@@ -39,83 +39,8 @@ frozen sets in Python 3.14. For example, ``(42, ("Spam", None))`` is
 deeply immutable, but ``(42, ["Spam", None])`` is only shallowly
 immutable, because the list constructor creates a mutable object.
 
-Motivation
-----------
-
-The motivation for immutability is four-fold:
-
-1. Immutability is a very useful concept in programming that simplifies
-   reasoning about state. In particular immutable objects are safe to
-   share between concurrent threads without any synchronisation in the
-   program.
-2. With the semantics of immutability that this PEP proposes, immutable
-   objects can be shared directly by reference across sub-interpreters.
-   This is a big performance boost for sub-interpreters as Python
-   currently requires objects to be transferred across sub-interpreters
-   by pickling. This also simplifies programming with sub-interpreters.
-   To make this safe, some changes are necessary with respect to how a
-   Python interpreter manages the memory of immutable objects. (Note
-   that this is not possible without *deep* immutability.)
-3. Since immutable objects are safe from data races, it is possible to
-   avoid some of the overhead surrounding field access that is needed
-   for correct reference counting in free-threaded Python.
-4. Memory for immutable objects can be managed in a leak-safe manner
-   without the need for cycle detection, even when there are cycles in the
-   immutable objects. This is the key to sharing objects
-   between sub-interpreters without needing substantial changes to cycle
-   detection.
-   The algorithm we use to perform this assumes that freezing an object
-   does not occur in parallel with concurrent mutation. 
-
-In this PEP, we strive to create a semantics for immutable
-objects that is consistent across both the per-interpreter GIL and
-free-threaded concurency paradigms.
-
-In a future PEP, we will propose a scheme for sharing *mutable* objects
-by reference across sub-interpreters, using region-based ownership to
-enforce the invariants necessary for safety. There is a
-short note about this at the end of this document.
-
-About the structure of this PEP
--------------------------------
-
-This PEP describes three stages of immutability support in Python.
-The first two stages permit more and more objects to be immutable,
-and the third stage permits freezing to propagate further.
-Permitting more objects to be immutable requires more changes to
-the Python interpreter, and additionally comes with design
-considerations at the language level. While we foresee no
-technical problems with getting to the third stage already in
-Python 3.15, discussions at DPO prompted the split of this PEP
-into stages to clarify the “return on investement” for each step
-and also permitting this change to be rolled out across multiple
-releases to give the Python community more time to get accustomed
-to immutability. It is also possible to only support the early
-stages if the further stages are perceived as too invasive.
-At a high-level, the three stages are:
-
-1. **Stage 1: Inherently Immutable Objects**.
-   Objects and types which are `de-facto immutable`_ in Python 3.14 are
-   immutable according to this PEP. Examples include tuples that only
-   contain immutable objects, strings, numbers, booleans, and `None`.
-   More information on current Python immutability can be found
-   in the `data model documentation`_.
-2. **Stage 2: Supporting User-Defined Types**.
-   Extend immutability to dicts, lists, sets and user-defined types
-   and their instances. Objects of these types will be freezable,
-   meaning they will be mutable at creation but may be made immutable.
-   Classes are freezable as well. This permits monkey patching, i.e.
-   adding and removing methods in a class before freezing which is
-   important for many libraries, e.g. dataclasses. Making objects
-   immutable is only permitted if there are no references outside
-   of the immutable objects that can witness the change from mutable
-   to immutable.
-3. **Stage 3: Enhancing Freeze Propagation**.
-   Empower freezing to make objects immutable in the presence of
-   references that can witness the change.
-
-.. _de-facto immutable: https://docs.python.org/3/glossary.html#term-immutable
-.. _data model documentation: https://docs.python.org/3/reference/datamodel.html
+Changes from the previous draft
+================================
 
 This PEP is a complete rewrite of the original PEP after `discussions on
 DPO`_ and elsewhere. Based on feedback from DPO this rewrite:
@@ -142,11 +67,49 @@ DPO`_ and elsewhere. Based on feedback from DPO this rewrite:
    the inclusion of direct sharing across sub-interpreters motivate many
    of the design decisions
 
-We are very greatful to the many comments and threads on DPO that have
+We are very grateful to the many comments and threads on DPO that have
 contributed to this PEP.
 
+Motivation
+#############
+
+The motivation for immutability is four-fold:
+
+1. With the semantics of immutability that this PEP proposes, immutable
+   objects can be shared directly by reference across sub-interpreters.
+   This is a big performance boost for sub-interpreters as Python
+   currently requires objects to be transferred across sub-interpreters
+   by pickling. This also simplifies programming with sub-interpreters.
+   To make this safe, some changes are necessary with respect to how a
+   Python interpreter manages the memory of immutable objects. (Note
+   that this is not possible without *deep* immutability.)
+2. Since immutable objects are safe from data races, it is possible to
+   avoid some of the overhead surrounding field access that is needed
+   for correct reference counting in free-threaded Python.
+3. Memory for immutable objects can be managed in a leak-safe manner
+   without the need for cycle detection, even when there are cycles in the
+   immutable objects. This is the key to sharing objects
+   between sub-interpreters without needing substantial changes to cycle
+   detection.
+   The algorithm we use to perform this assumes that freezing an object
+   does not occur in parallel with concurrent mutation. 
+4. Immutability is a very useful concept in programming that simplifies
+   reasoning about state. In particular immutable objects are safe to
+   share between concurrent threads without any synchronisation in the
+   program.
+
+In this PEP, we strive to create a semantics for immutable
+objects that is consistent across both the per-interpreter GIL and
+free-threaded concurrency paradigms.
+
+In a future PEP, we will propose a scheme for sharing *mutable* objects
+by reference across sub-interpreters, using region-based ownership to
+enforce the invariants necessary for safety. There is a
+short note about this at the end of this document.
+
+
 Design considerations due to sub-interpreters
----------------------------------------------
+==============================================
 
 This PEP will enhance sub-interpreters so that immutable
 objects can be shared directly by reference between sub-interpreters. This is possible because
@@ -159,7 +122,7 @@ by multiple sub-interpreters, the Python VM could crash or
 be susceptible to use-after-free bugs that could corrupt
 data silently. If immutability could be circumvented, the
 same would be true for immutable objects. This motivates
-a rather strict interpretation of immutability, where the
+a strict interpretation of immutability, where the
 mutable and immutable “worlds” are kept apart. (Although see
 `Escape hatches`_.)
 
@@ -195,6 +158,48 @@ Because of the reference from C to D, it is possible to have two
 accesses relying on different GILs for correctness, meaning
 these accesses do not synchronise. This may silently corrupt
 or crash the Python VM.
+
+
+Specification
+#############
+
+This PEP describes three stages of immutability support in Python.
+The first two stages permit more and more objects to be immutable,
+and the third stage permits freezing to propagate further.
+Permitting more objects to be immutable requires more changes to
+the Python interpreter, and additionally comes with design
+considerations at the language level. While we foresee no
+technical problems with getting to the third stage already in
+Python 3.15, discussions at DPO prompted the split of this PEP
+into stages to clarify the “return on investment” for each step
+and also permitting this change to be rolled out across multiple
+releases to give the Python community more time to get accustomed
+to immutability. It is also possible to only support the early
+stages if the further stages are perceived as too invasive.
+At a high-level, the three stages are:
+
+1. **Stage 1: Inherently Immutable Objects**.
+   Objects and types which are `de-facto immutable`_ in Python 3.14 are
+   immutable according to this PEP. Examples include tuples that only
+   contain immutable objects, strings, numbers, booleans, and `None`.
+   More information on current Python immutability can be found
+   in the `data model documentation`_.
+2. **Stage 2: Supporting User-Defined Types**.
+   Extend immutability to dicts, lists, sets and user-defined types
+   and their instances. Objects of these types will be freezable,
+   meaning they will be mutable at creation but may be made immutable.
+   Classes are freezable as well. This permits monkey patching, i.e.
+   adding and removing methods in a class before freezing which is
+   important for many libraries, e.g. dataclasses. Making objects
+   immutable is only permitted if there are no references outside
+   of the immutable objects that can witness the change from mutable
+   to immutable.
+3. **Stage 3: Enhancing Freeze Propagation**.
+   Empower freezing to make objects immutable in the presence of
+   references that can witness the change.
+
+.. _de-facto immutable: https://docs.python.org/3/glossary.html#term-immutable
+.. _data model documentation: https://docs.python.org/3/reference/datamodel.html
 
 
 Semantics of immutability
@@ -292,6 +297,24 @@ are not mutated by program threads while the cycle detector is running.
 Stage 2 and 3 permits creation of immutable cycles. There we
 introduce a :ref:`different technique to handle cycles <scc>`.
 
+There are a handful of types that form cycles in the CPython implementation,
+such as ``tuple``, ``type``, and ``object``.  These cycles are part of the static
+initialization of the interpreters and are Immortal, so they do not need
+to be managed by the cycle detector.
+
+``register_shallow_immutable(typ)``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To make a user-defined type immutable, it has to be registered
+using ``register_shallow_immutable(typ)``. This expresses that the
+type does not contain any mutable fields.  This allows C-modules or Python
+modules that already have immutable types to register them as such, so that
+they can be shared across sub-interpreters.
+
+If a type is incorrectly registered as shallow immutable, this can lead to
+undefined behaviour, including crashes and memory corruption, when using 
+the type across sub-interpreters.
+
 Summary
 ~~~~~~~
 
@@ -312,13 +335,12 @@ and function objects and freezable instances of immutable
 user-defined types. Instances of immutable types are
 freezable, meaning they are mutable, but can be made
 immutable by freezing them through an explicit call to a
-``freeze()`` function. We also make the types ``list``,
-``dict``, and ``set`` immutable and their instances
-freezable, meaning lists, dicts and sets are mutable on
-creation but can be made immutable later. To make a type
+``freeze()`` function. We also make the instances of ``list``,
+``dict``, and ``set`` freezable, meaning lists, dicts and sets
+are mutable on creation but can be made immutable later. To make a type
 immutable immediately at creation time, a decorator
 ``@frozen`` can be used. The decorator, the ``freeze()``
-function, along with other utilies described later in this
+function, along with other utilities described later in this
 document are in a module called ``immutable``.
 
 An immutable function is a normal function that can be
@@ -352,12 +374,8 @@ graph from outside the object graph, except the reference passed to
 ``freeze()``. For example, consider the figure below, ``freeze(x)`` will
 fail because of the reference to ``C`` in ``y``. However, if that reference
 is removed, or if ``C`` was already immutable, ``freeze(x)`` would succeed.
-Note the cycle between A and B – immutable are no longer neccessarily tree
-shaped. In addition, we also limit freezing "user objects" from propagating
-to "declaration objects" such as types and function objects.
-(These limitations are not neccessary for any technical
-reasons. They were added as a response to comments in DPO
-discussions.)
+Note the cycle between A and B – immutable are no longer necessarily tree
+shaped.
 
 .. figure:: pep-0795/diagram_3.svg
    
@@ -386,7 +404,7 @@ structure is permitted despite the two incoming references.
 
 As types and functions are freezable, they can be made
 immutable by passing them as arguments to ``freeze()``.
-Alternatively, to declare an function or type that will
+Alternatively, to declare a function or type that will
 be immutable at creation, we introduce a ``@frozen``
 decorator, which will be explained below (and in additional
 detail :ref:`here <frozen>`).
@@ -413,12 +431,11 @@ object to another sub-interpreter, we have successfully recreated the
 problematic situation in Figure 1 where C is ``die_roll`` and D is
 ``random``. **In stage 2, a function which is declared @frozen may
 only capture immutable objects.** The code above will raise an exception
-saying that ``die_roll()`` cannot be made immutable because it
-captures ``random`` which is mutable. Note that freezing a module
-object is not possible in stage 2 because the ``module``
-type object is (on purpose) left mutable, in order to limit
-freeze propagation. This is not ideal, but unavoidable for
-now. One workaround is to simply move `import random` into the
+as the reference to ``random`` means that it is not self-contained.
+Note that freezing a module
+object is not possible in stage 2 because any used ``module``
+object is reachable by importing it, and thus would break the self-contained check.
+One workaround is to simply move `import random` into the
 function. Another option, which we will show later, is to use
 escape hatches to permit the code above to work by using a proxy for the
 ``random`` module that directs calls to ``randint()`` to the
@@ -458,7 +475,7 @@ implicitly declared ``@frozen`` as well.
 
 Listing 3 creates a ``Die`` type which is immutable at creation.
 (An alternative to the ``@frozen`` decorator is to call ``freeze(Die)``
-rigth after the class declaration -- this is equivalent.) As neither
+right after the class declaration -- this is equivalent.) As neither
 the ``Die`` class nor its functions capture any external mutable state,
 this declaration is valid. The import inside of ``roll()`` 
 illustrates the major difference between the function importing the
@@ -491,8 +508,7 @@ variable to change. However, as indicated by the blue reference arrow,
    blue” with dashed borders and references from immutable objects drawn
    with thicker blue lines.
 
-Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj`` and
-for convenience also returns a reference to (now immutable) ``obj``.
+Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj``.
 
 Immutable functions
 ~~~~~~~~~~~~~~~~~~~
@@ -524,27 +540,36 @@ the ``foo`` function effectively gives ``foo`` its own copy of the
    print(x) # prints 4711
    foo() # returns 42
 
-This design ensures that freezing ``foo`` will not effect the
-module in which foo is designed.
+Without this design, we would not be able to freeze ``foo`` as it
+would not be self-contained.
 
-An alternative to this design would not decouple ``foo``'s ``x``
-from the enclosing ``x``. This design would then have to
-prevent both ``x``'s from being reassigned. Since a function
-object can be frozen in a completely different scope than it
-was defined, the decoupling design is favoured as freezing
-cannot turn a variable in a completely different scope 
-into a constant.
 
-An object will always fail to freeze if it has a field
-``__freezable__`` with a value of ``False``. The ``immutable`` module
-provides a decorator ``@unfreezable`` that inserts such a field in a declaration.
+Unfreezable
+~~~~~~~~~~~
+
+Sometimes an function or object should not be freezable as
+there is no sensible use case for making it immutable.  Consider a
+function that increments a ``nonlocal`` variable.  This function
+can never be used safely once it has been made immutable.
+
+To support this use case, we introduce a ``set_freezable`` function
+that can set the freezable status of an object.  In stage 2, this
+function can be passed the special value ``Never``, which prevents
+the object from being frozen.  The ``@unfreezable`` decorator is
+built on top of this function:
 
 .. code-block:: python
    :caption: **Listing 5:** Examples of opting out of freezing.
 
+   def unfreezable(obj):
+       set_freezable(obj, Never)
+       return obj
+
    x = 42
    @unfreezable
    def foo():
+       nonlocal x
+       x += 1
        return x
 
    is_frozen(foo) # False
@@ -555,9 +580,23 @@ provides a decorator ``@unfreezable`` that inserts such a field in a declaration
            self.value = value
 
    c = Cell(42)
-   c.__freezable__ = False
+   unfreezable(c)
    freeze(c) # Fails "object is unfreezable"
 
+
+
+``register_freezable(typ)``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To make a user-defined type freezable, it has to be registered
+using ``register_freezable(typ)``. This is to avoid
+accidentally making a type freezable that should not be.
+This can be used from C or Python code to register that instances
+of a type are freezable, and that any C code that mutates
+instances of the type correctly checks that the instances are 
+not immutable before mutating them.
+
+Stage 2 will add some core types as freezable.
 
 .. _summary-1:
 
@@ -572,7 +611,7 @@ In addition to stage 1:
 -  Declarations (types and functions) can be made immutable, either by
    calling ``freeze()`` or by declaring them ``@frozen``.
 -  Immutable declarations may not capture references to mutable state
--  An immutable class’ functions are all immutable, and methods cannot
+-  An immutable class’s functions are all immutable, and methods cannot
    be added, removed, or changed.
 -  Instances of immutable types are mutable at creation but can be made
    immutable.
@@ -581,57 +620,29 @@ In addition to stage 1:
 Stage 3 – enhancing freeze propagation
 --------------------------------------
 
-Stage 3 relaxes the constraints on how freezing can propagate and
-adds tools for documenting and maintaining immutability in code.
-
-In stage 3, if obj ``o`` has ``o.__freezable__ == True``, freezing is
-permitted to propagate to the object regardless of the rules laid
-out in stage 2. This means that *freezing is permitted to propagate
-from objects to types and declarations, and back again,* and that
-*objects can be made immutable even if they have incoming
-references from objects that stay mutable* -- but only if programmers
-opt-in to these features. Note that by normal
-Python semantics, if a class ``C`` has ``C.__freezable__ == True``,
-that means that a subclasses ``D`` of ``C`` also has
-``D.__freezable__ == True``, and furthermore an instance ``o`` of
-``C`` or ``D`` has ``o.__freezable__ == True`` (unless ``D`` or ``o``
-create their own ``__freezable__`` field that shadows ``C``'s.
-Setting ``__freezable__ == False`` has the effect of *preventing*
-freezing. Note that just because freezing is permitted to propagate
-to an object, it does not mean that freezing it will succeed. For
-example, if object ``o`` references object ``p``, and
-``o.__freezable__ == True`` but ``p.__freezable__ == False``, then
-``freeze(o)`` will not succeed as an immutable object is not
-permitted to reference mutable objects. From now on, when needed,
-we will call freezable objects with ``__freezable__ == True``
-*strongly freezable objects*.
-
-A decorator ``@freezable`` is added that can be used on class
-and function declarations that adds a ``__freezable__`` field
-with value ``True``. 
-
-In stage 3, the ``@frozen`` decorator and the new ``@freezable``
-decorator now takes an optional white-list argument that permits
-identifying captured mutable state to be frozen by the name. A
-catch-all argument ``"*"`` can be used to permit freezing to
-propagate to any captured mutable state. If an object ``o`` is
-named in the white-list of a declaration, freezing that declaration
-treats ``o`` as if ``o.__freezable__ == True`` holds.
-
-Finally, the ``module`` type object is made immutable which permits
-entire modules to be frozen. A module object may declare itself
-freezable by setting the ``__freezable__`` field to the value
-``True``.
+The self-contained checks in stage 2 lead to the least surprises for existing
+code as it is not possible for an object to suddenly become immutable
+under foot. However, this may be too restrictive in some cases. Stage 3 allows
+objects to explicitly opt-out of the self-contained checks.  This is done using
+the ``set_freezable`` function.  We extend it to take an additional special value ``AliasesAllowed``.
+When this has been called on an object, then the object does not need the
+self-contained check to be frozen.
+We refer to objects in this state as *strongly freezable objects*.
 
 
 .. code-block:: python
    :caption: **Listing 6:** Freezing propagates.
 
-   monty = []
+   def freezable(obj):
+       set_freezable(obj, AliasesAllowed)
+       return obj
 
-   @freezable("monty") # white-listing monty
+   monty = []
+   freezable(monty) # make monty strongly freezable
+
+
+   @freezable
    class Person:
-       @freezable
        def __init__(self, name):
            self.name = name
            monty.append(self)
@@ -649,7 +660,7 @@ freezable by setting the ``__freezable__`` field to the value
    eric.name = "Eric" # OK
 
    freeze(eric) # Freeze an instance of Person
-   is_frozen(graham) # True
+   is_frozen(graham) # True - graham is reachable from monty, and monty is reachable from eric.
    is_frozen(monty) # True
 
    monty.append(Person("John")) # throws exception because monty is immutable
@@ -663,131 +674,25 @@ capture the contents of the ``monty`` variable, freezing any person
 object freezes the list of persons, along with all persons in the
 list.
 
-White-listing can also be used to freeze module objects,
-as shown by the example below.
+Pre-freeze hook
+~~~~~~~~~~~~~~~
+Sometimes it is necessary to run some code just before an object
+is frozen. This can be done by calling ``set_pre_freeze_hook`` with a callable that will be
+invoked just before freezing the object. The callable will be passed
+the object that is about to be frozen as its only argument. The callable
+may call ``set_freezable`` on this object, or its contained objects to affect
+whether freezing will succeed or not.
 
+This can be used to enable ``AllowAliases`` on contained objects at the last moment,
+so that it only comes from a particular object being frozen, and not from other references.
 
-.. code-block:: python
-   :caption: **Listing 7:** Example of strongly freezable objects and white-listing to freeze a module object.
+If a freeze fails because at least one object is not allowed to be frozen, then the system
+will ensure none of the objects are frozen.  However, the effects of the pre-freeze hook
+will not be undone.
 
-   # module utils
+On user defined types, the definition can directly define a ``__pre_freeze__`` method that
+will be called as the pre-freeze hook.
 
-   def gcd(a, b):
-       while b:
-           a, b = b, a % b
-       return a
-
-
-   # other file
-
-   import utils
-
-   # Make Fraction class and instances strongly freezable
-   @freezable
-   class Fraction:
-       # Permit freezing to propagation to the utils module
-       @freezable("utils")
-       def __init__(self, numerator, denominator):
-           d = utils.gcd(numerator, denominator)
-           self.n = numerator // d
-           self.d = denominator // d
-
-       @freezable
-       def __add__(self, other):
-           num = self.n * other.d + other.n * self.d
-           den = self.d * other.d
-           return Fraction(num, den)
-
-       @freezable
-       def __repr__(self):
-           return f"{self.n}/{self.d}"
-
-   f1 = Fraction(1, 3)
-   f2 = Fraction(2, 7)
-   freeze(f1) # OK -- freezes class object and instance
-   f1 = f1 + f2
-
-
-Right before freezing, we have the following object graph.
-
-.. figure:: pep-0795/diagram_6.svg
-   :figwidth: 50 %
-
-   **Figure 6:** Right before ``freeze(f1)``.
-
-After we have executed ``freeze(f1)``, the “ice blue” objects will be
-immutable:
-
-.. figure:: pep-0795/diagram_7.svg
-   :figwidth: 50 %
-
-   **Figure 7:** Right after ``freeze(f1)``.
-
-Lines drawn in blue denote references that are stored in a field of an
-immutable object. Thus, the contents of ``f1.n`` and ``f1.d`` cannot
-change, but the stack variable ``f1`` can be made to point to an
-entirely different object. (As happens in the next line of the example
-``f1 = f1 + f2``.)
-
-Let’s now bring in functions, modules, and types. To reduce clutter, we
-will not draw the full object graph, since there are lots of other
-default functions e.g. \ ``__eq__`` in every type, etc. So with some
-simplifications, the object graph of our example above looks like this
-right before freezing:
-
-.. figure:: pep-0795/diagram_8.svg
-
-   **Figure 8:** Almost full object graph, right before freezing.
-
-Note the line from ``Function 3`` (``Fractions.__init__``) to the
-``utils`` module object and the line from that object to
-``Function 1`` (``gcd``). This is the reference that ``__init__``
-captures to ``utils`` via its call to ``utils.gcd()``.
-
-Because we permit freezing the ``utils`` object (due to the
-white-listing in ``@freezable`` on ``__init__``), freezing the
-``__init__`` function will succeed, and cause the freezing of
-``utils`` and ``gcd``.
-
-.. figure:: pep-0795/diagram_9.svg
-
-   **Figure 9:** Almost full object graph, right after freezing.
-
-The example illustrates an important point: ``freeze(f1)`` is
-permitted to propagate to its type object as that object is strongly
-freezable. Note that because it is strongly freezable, we are
-permitted to freeze ``Fraction`` although it is not self-contained
-(it has two incoming references from ``f1`` and ``f2`` and we are
-only freezing ``f1``). In stage 2, we would have had to write
-``freeze(f1, f2, Fraction)`` to be allowed to freeze ``f1`` and
-``Fraction``, i.e. we would have been forced to freeze ``f2`` too.
-
-Thus, stage 3 is now close to the initial version of this PEP:
-``freeze(f1)`` suffices to freeze the above. What is different
-though is that the programmer had to explicitly make ``Fraction``
-strongly freezable, and explicitly permit freezing of 
-``__init__`` to propagate to ``utils``.
-
-When the ``Fraction`` class is made immutable all its function
-objects, such as ``__init__``, ``__add__``, and ``__repr__`` must
-be immutable too, or they are no longer callable. Of the three
-functions in ``Fraction``, only ``__init__`` captures external
-state: a reference to the module ``utils`` from which we access the
-function ``gcd``. Thus the module must be made immutable too, which
-propagates to the ``gcd`` function. The white-listing makes this
-legal, but the module could also have set ``__freezable__ = True``
-internally. Notably, ``__add__`` has a reference to ``Fraction``
-which would also have to be made immutable, but is already immutable
-in this example.
-
-Note that the ``utils`` variable in the stack frame did not become
-immutable, although it is pointing to an immutable object. It is
-still possible to reassign that variable. Also note that while a
-Python class technically has a reference to all its subclasses, we
-do not freeze subclasses, only superclasses, when a class is made
-immutable. (Under the hood, we use our escape hatches to make sure
-that a mutable class C that is subclassing an immutable class is
-only accessible to the subinterpreter where C was defined.)
 
 
 .. _summary-2:
@@ -797,17 +702,11 @@ Summary
 
 In addition to stage 2:
 
-- Object (including module objects) can be made *strongly
-  freezable* by having a field ``__freezable__`` with value ``True``.
-  An explicit ``@freezable`` annotation on a declaration adds such a field.
-- Strongly freezable objects are always permitted to (attempt to) freeze,
-  enabling opt-in freeze propagation from objects to declarations (and back),
-  and without a requirement of "self-containedness".
-- Support for freezing mutable objects captured in declarations
-  through white-listing through arguments to ``@frozen`` and
-  ``@freezable``.
-
-
+- Objects can be made *strongly
+  freezable* by calling ``set_freezable`` with the value ``AllowAliases``.
+- We also provide a pre-freeze hook that can be used to run code
+  just before an object is frozen. This can be used to set ``AllowAliases``
+  on contained objects at the last moment.
 
 Escape hatches
 ==============
@@ -865,10 +764,11 @@ keeps working even after the class is made immutable.
                new = old + 1
                immutable.freeze(new)  # shared fields can only hold immutable objects
                if self.__class__.counter.set(old, new): # stores new in counter if counter's value is old
+                   self.id = new
                    return  # break out of loop on success
 
        def __repr__(self):
-           return f"Cell({self.imm}) instance number {self.__class__.counter.get()})"
+           return f"Cell({self.value}) instance number {self.id})"
 
    c = Cell(42)
    immutable.freeze(c)        # Note: freezes Cell
@@ -1009,271 +909,24 @@ the value of the local field for that sub-interpreter. (If the initial
 value is an immutable object, one could also consider passing in the
 object straight, rather than a function that returns it.)
 
-Escape hatches and modules
-==========================
+Cycles involving escape hatches
+---------------------------------
 
-Let us come back to modules. Recall the ``gcd`` function in the
-fractions example from stage 3 was imported from the module
-``utils``. In that particular example, the module did not have any
-mutable state, which meant freezing it is unproblematic. However,
-in many cases, modules maintain some state and making that state
-immutable incapacitates the module.
+Cycles that involve these escape hatches will not be collected
+unless they are manually broken.  This is because the cycle detector
+is per interpreter, and thus without adding a stop all subinterpreters
+collector it is not possible to find cycles that involve either shared
+fields or interpreter-local fields.
 
-Luckily, the interpreter-local field permits an immutable object to
-store pointers to mutable objects without compromising safety in the
-sub-interpreters model. This can be used together with modules and
-functions to permit an immutable function to call functions that rely on
-mutating state. For example, let us define a module for logging thus:
+In the free-threaded build, the new cycle stop the world cycle detector
+will find cycles involving shared fields, but not interpreter-local fields.
 
-.. code-block:: python
-   :caption: **Listing 11:** Running module example.
-
-   # logger.py
-   messages = []
-
-   def log(msg):
-       messages.append(msg)
-
-   def flush(file):
-       file.writelines(messages)
-       messages.clear()
-
-And let’s use the module:
-
-.. code-block:: python
-   :caption: **Listing 12:** Running module example – use-site.
-
-   import logger
-
-   def simulate_work():
-       logger.log("simulate")
-
-   for _ in range(0, 10):
-       simulate_work()
-
-   with open("log.txt", "w") as f:
-       logger.flush(f)
-
-If we wanted to freeze ``simulate_work()`` and pass it around so that
-any sub-interpreter could call it, we have to do some refactoring of the
-module first. For example, it is not thread-safe right now, meaning that
-concurrent calls to log could drop some messages, etc. But more
-importantly, it is not safe for different sub-interpreters to manipulate
-the same mutable ``messages`` list object.
-
-Let’s go through our options. For completeness, we start with some
-options that do *not* rely on escape hatches. These all involve
-rethinking the ``logger`` design.
-
-Do nothing
-----------
-
-While this is not an option here, for completeness, let us explore doing
-nothing. If we simply make ``logger`` immutable, the ``messages`` list
-becomes immutable and calls to ``log`` will result in exceptions on
-every attempt to append to ``messages``, which means we have
-“incapacitated the module”. For a module which is stateless, or that
-only had immutable constants, this would have worked.
-
-Make the module stateless
--------------------------
-
-We can refactor the module to become stateless:
-
-.. code-block:: python
-   :caption: **Listing 13:** Stateless logger module.
-
-   # logger.py
-
-   def log(msg):
-       print(msg)
-
-   def flush(file):
-       """Deprecated, should no longer be used"""
-       pass
-
-    # Mark the module as freezable
-    __freezable__ = True
-
-This is probably not what we want to do, but shows that printing from an
-immutable function is not a problem (because the ``print`` method is
-considered immutable in this PEP). This strategy might work in cases that
-can be rewritten in terms of immutable builtins, but is not a general
-solution.
-
-Move the module’s state out of the logger module
-------------------------------------------------
-
-We can refactor the module to use external state which is passed in to
-the logger. The code below permits the module to be used as before, but
-now switches behaviour to rely on the user passing in a mutable list to
-``log`` and ``flush`` if ``messages`` are immutable.
-
-.. code-block:: python
-   :caption: **Listing 14:** Logger module with external state.
-
-   # logger.py
-   from immutable import is_frozen
-   messages = []
-
-   def log(msg, msgs=None):
-       if is_frozen(messages):
-           if msgs is None:
-               raise RuntimeError("Nowhere to log messages")
-           else:
-               msgs.append(msg)
-       else:
-           messages.append(msg)
-
-
-   def flush(file, msgs=None):
-       if is_frozen(messages):
-           if msgs:
-               file.writelines(msgs)
-               msgs.clear()
-       else:
-           file.writelines(messages)
-           messages.clear()
-
-    # Mark the module as freezable
-    __freezable__ = True
-
-This is a rather large refactoring, and probably not what we want in
-this case, but maybe in others.
-
-The remaining cases use our escape hatches to permit the module to hang
-on to some mutable state.
-
-Store the module state in a shared field
-----------------------------------------
-
-Keeping the module’s state but moving it out of sub-interpreter
-isolation requires that all objects in the state, except for the escape
-hatch, are immutable.
-
-.. code-block:: python
-   :caption: **Listing 15:** Logger module with shared field. Note, does not show the additional synchronisation needed to protect the shared logger state in ``messages`` as this is not specific to this PEP.
-
-   # logger.py
-   from immutable import shared, freeze
-   messages = shared(freeze([]))
-
-   # Note: does not protect against races on messages
-   def log(msg):
-       new_messages = messages.get()[:]
-       new_messages.append(msg)
-       freeze(new_messages)
-       messages.set(new_messages)
-
-   # Note: does not protect against races on messages
-   def flush(file):
-       file.writelines(messages.get())
-       messages.set(freeze([]))
-
-    # Mark the module as freezable
-    __freezable__ = True
-
-This module can now be made immutable without incapacitating it -- the
-``messages`` variable will effectively remain mutable (through an
-indirection), and can be updated with new messages. This allows a single
-logger module instance to be used across all sub-interpreters. Locks from
-the standard library will support immutability to enable synchronization
-across sub-interpreters. This would be needed here to prevent races in the
-``log`` and ``flush`` function. But these changes are related to standard
-concurrency and not specific to this PEP.
-
-
-Keep one logger per sub-interpreter
------------------------------------
-
-If we have a multi-phase initialization module, it may make more sense
-to have one logger state per sub-interpreter. There are two ways to go
-about this. Let’s start with the analog of the above solution using an
-interpreter-local field.
-
-.. code-block:: python
-   :caption: **Listing 16:** Logger module with interpreter-local field.
-
-   # logger.py
-   from immutable import local
-   messages = local(freeze(lambda: []))
-
-   def log(msg):
-       messages.append(msg)
-
-   def flush(file):
-       file.writelines(messages.get())
-       messages.set([])
-
-    # Mark the module as freezable
-    __freezable__ = True
-
-The interpreter-local field is initialised on first access using a
-immutable lambda function. The function needs to be immutable to be shared
-across sub-interpreters. When the function is called it creates a
-**mutable** empty list which is stored as the initial value of the
-current sub-interpreter’s ``messages`` field.
-
-We do not need to change ``log`` and only change ``flush`` to call
-``set()`` and ``get()`` on the messages field – the logic is otherwise
-unchanged. Now freezing ``log`` and ``flush`` is unproblematic as freezing does
-not propagate through ``messages``. A call to the shared ``log``
-function from a sub-interpreter will store the log message on that
-sub-interpreter’s ``message`` list.
-
-Keep one logger per sub-interpreter – take 2
---------------------------------------------
-
-We can achieve the same effects as above without changing the logger
-module, but instead change how we import it. Let’s first do that
-manually, and then introduce some tools that are part of the
-``immutable`` library in this PEP.
-
-.. code-block:: python
-   :caption: **Listing 17:** Sketching support for wrapping modules behind immutable proxies.
-
-   @frozen
-   def import_and_wrap(module):
-       from immutable import local
-
-       @frozen # note -- assumes module is immutable
-       def local_import():
-           return __import__(module)
-
-       return local(local_import)
-
-   logger = import_and_wrap("logger")
-   # everything below unchanged
-
-   def simulate_work():
-       logger.log("simulate")
-
-   for _ in range(0, 10):
-       simulate_work()
-
-   with open("log.txt", "w") as f:
-       logger.flush(f)
-
-The ``import_and_wrap`` function wraps the module object for the logger
-module in an interpreter-local field. Thus, ``logger`` will not be
-made immutable when we freeze ``simulate_work``. The first time a
-sub-interpreter tries to access the shared ``logger`` object as part of
-a call to ``logger.log()`` inside ``simulate_work``, the sub-interpreter
-will import the module and subsequent calls on the local field will be
-forwarded to the module object.
-
-To ensure that any library that imports ``logger`` automatically gets
-the wrapper, it is possible to replace the entry in
-``sys.modules['logger']`` with the wrapper. The ``immutability`` library
-in the PEP provides utilities for importing and wrapping, wrapping an
-already imported module, and ensuring that subsequent ``import``
-statements import the wrapper.
 
 Controlling the propagation of freezing
 =======================================
 
 A recurring theme when discussing this proposal on DPO has been concerns
-that freezing an object will propagate beyond the intension, and cause
+that freezing an object will propagate beyond the programmers intention, and cause
 objects to be made immutable accidentally. This is an inherent effect in
 immutability systems at witnessed by e.g. ``const`` in C and C++.
 Annotating a variable or function with ``const`` typically propagates in
@@ -1281,7 +934,18 @@ the source code, forcing the addition of additional ``const``
 annotations, and potentially changes to the code. In C and C++, this
 happens at compile-time, which helps understanding the propagation. (See
 also the section on static typing for immutability later in this
-document.)
+document.
+
+To address these discussions we have staged 
+the introduction of features to make clear what can be changed. 
+Stage 1, restricts deep immutability to 
+objects that are immutable at creation time, and therefore
+there is no freeze propagation. Stage 2 introduces freeze propagation,
+but limits the propagation to self-contained object graphs. Self-contained 
+addresses the concerns about surprise and accidental freezing.
+Stage 3 introduces the ability to opt-out of self-contained checks
+to permit more freeze propagation where objects explicitly opt-in to
+this.
 
 Freeze propagation in stage 1
 -----------------------------
@@ -1359,24 +1023,21 @@ object around without making it impossible to freeze.
 
 **Propagation rules:**
 
--  Freezing a type propagates to its functions, but not to
-   any other types or functions, or non-declaration objects.
-   (This means that freezing class ``A`` which derives from
-   ``B`` requires that ``B`` is frozen before ``A`` or that
-   they are both frozen at the same time.)
--  Freezing an object propagates to other objects, but not to
-   declarations. (This means that freezing an instance of
-   class ``A`` requires that ``A`` is already frozen or that
-   we are explicitly freezing the instance and ``A`` at the
-   same time).
+-  Freezing an object propagates to other objects that it can reach.
+   This includes the type of the object, the functions in the type,
+   and any objects referenced from the object.
+-  Freezing will only succeed if the entire object graph that
+   will be made immutable is self-contained, meaning there are no
+   incoming references from outside the object graph, except for
+   the reference passed to ``freeze()``.
 
 **Freezing rules:**
 
--  Objects that are instances of immutable types are freezable by
-   default, but freezing an object graph may fail if it contains
+-  Objects that are instances of types that have been `registered_freezable` may be frozen,
+   but freezing an object graph may fail if it contains
    objects which may not be frozen.
--  An object can be made impossible to freeze by setting
-   ``__freezable__ = False``. A convenience decorator ``@unfreezable``
+-  An individual object can be made impossible to freeze by setting
+   ``set_freezable(obj, Never)``. A convenience decorator ``@unfreezable``
    installs this field in declarations.
 
 **Immutability invariant:**
@@ -1430,6 +1091,9 @@ guarantee that the call will succeed.
   *unfreezable*) or any other value except ``True`` or ``False``
   (making them *freezable*, but not strongly).
 
+[TODO: Need some changes above.]
+
+
 **Immutability invariant:**
 
 -  An immutable object only references other immutable objects, with the
@@ -1465,10 +1129,10 @@ Freezing functions
 
 A function can become immutable if it satisfies *all* of the constraints below:
 
-- The function is not unfreezable.
+- All the constraints on freezing objects above. 
 - All objects the function captures are immutable or are can become
   immutable. (The latter requires the objects to be strongly
-  freezable or white-listed.) Note that default arguments are
+  freezable.) Note that default arguments are
   always permitted to freeze.
 
 Each of the following functions can be made immutable by a simple call to
@@ -1498,11 +1162,6 @@ Freezing ``function3`` and ``function4`` will succeed only if the
 current value of ``x`` is immutable. Furthermore, it detaches from the value
 of ``x`` in the outer scope, so even if ``x`` is reassigned in the
 outer scope, the immutable functions will still see the old immutable value.
-If ``function3`` or ``function4`` were declared ``@freezable("x")``,
-they would have made the contents of ``x`` immutable.
-
-Also note that ``function1`` will become immutable as a side-effect
-of freezing ``function2``.
 
 The final example shows that freeze propagation can make a function
 unusable. However, because of the rules of freeze propagation,
@@ -1646,53 +1305,6 @@ immutable prevents reassigning the ``my_class_variable`` field. If the
 programmer did not intend for ``my_class_variable`` to be a constant
 variable, then freezing ``Foo`` will incapacitate the class object.
 
-
-Consequences of this design on freeze propagation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-In this PEP, freezing a type or function will never propagate to
-normal objects in the program, unless these objects are strongly
-freezable. In other words, freezing declarations should not lead to
-*accidental* freezing of program state.
-
-There are two ways to freeze state:
-
-1. Explicitly declare it as ``@frozen`` (which first constructs it and then freezes it in one go)
-2. Explicitly call ``freeze`` on it
-
-(Technically, it is also possible to call ``frozen`` as a function
-although that it not intended.)
-
-Because module objects opt-out of freezing by default, it should be
-hard to accidentally incapacitate a module. The module has to
-explicitly turn on that support (which is possible in stage 3).
-Creating a module with only some types or functions that support
-freezing is possible by explicitly opting out of freezing in those
-declarations. Also, if these declarations capture mutable module
-state beyond white-listing, then freezing them will fail. The
-module implementer needs to either make that state immutable or use
-an escape hatch (or increase the permissions).
-
-Below is an example of a program with some objects and modules with
-types, functions and state. We will use this example for illustration.
-
-.. figure:: pep-0795/diagram_12.svg
-
-   **Figure 12:** Module structure.
-
-For concreteness, assume that we are in stage 3 and that nothing is
-declared immutable. Assume ``Func1`` is declared unfreezable since
-it needs to read and write the external ``Var1`` variable. Now,
-``freeze(y)`` will fail unless ``Module1.Type1`` is immutable. To
-make ``Module1.Type1`` immutable, we can either do
-``freeze(Module1)`` which will freeze everything in ``Module1`` or
-we can just do ``freeze(Module1.Type1)``. The latter will attempt
-to freeze ``Func1`` which will fail as it is unfreezable. We are
-still allowed to freeze ``Type1``, but not call its ``Func1``
-method. Freezing ``Module3.Type4`` will fail unless we also freeze
-``Module3.Type3`` at the same time (or if it is already frozen).
-Finally, freezing ``Func3`` cannot propagate through the import to
-``Module3`` unless ``Module3`` is strongly freezable.
 
 
 Dealing with cyclic dependencies
@@ -1952,7 +1564,7 @@ decorating the top-level contents of a class, so:
 
 .. code-block:: python
 
-   @freezable(frob", "Baz")
+   @freezable("frob", "Baz")
    class Foo:
        def frob(self, a, b, c):
            class Bar:
@@ -2231,7 +1843,7 @@ safe for freezing to exclude ``interpreter_map``.)
        return immutable.freeze(LocalField())
 
 Implementation
-==============
+###############
 
 We will use two bits as flags per Python object: the first will be used
 to track immutability; the second will be used by the SCC algorithm that
@@ -2286,7 +1898,7 @@ implementation detail, and then exposed to Python through the
 ``freeze(obj)`` function in the immutable module.
 
 Atomic reference counting
--------------------------
+==========================
 
 As a necessary requirement for directly sharing objects across
 sub-interpreters, reference counts for immutable objects must be managed
@@ -2295,18 +1907,18 @@ by branching on the immutability flag, and using atomic operations only
 if the bit it set.
 
 Management of immutable objects
--------------------------------
+================================
 
 When objects are made immutable, we remove them from the heap of their
 creating interpreter. This is done by unlinking them from the GC work
 list that all objects participate in. If the object ever becomes
-garbage, it will be added back to its creating interpreter, which will
-handle cleanup and finalization.
+garbage, it will be added to the interpreter with the last reference,
+which will handle cleanup and finalization.
 
 .. _scc:
 
 Dealing with cycles in immutable object graphs
-----------------------------------------------
+===============================================
 
 In `previous work <https://dl.acm.org/doi/10.1145/3652024.3665507>`__,
 we have identified that objects that make up cyclic immutable garbage
@@ -2317,16 +1929,18 @@ strongly connected component (SCC).
 As part of freezing, we perform an SCC analysis that creates a
 designated (atomic) reference count for every SCC created as part of
 freezing the object graph. Reference count manipulations on any object
-in the SCC is “forwarded” to that shared reference count. This can be
-done without bloating objects by repurposing the existing reference
-counter data to be used as a pointer to the shared counter.
+in the SCC is “forwarded” to that shared reference count. In the GIL enabled
+build, this can be done without bloating objects by repurposing the
+existing reference counter data to be used as a pointer to the shared counter.
 
 This technique permits handling cyclic garbage using plain reference
 counting, and because of the single reference count for an entire SCC,
 we will detect when all the objects in the SCC expire at once.
 
+
+
 Weak references
----------------
+=================
 
 Weak references are turned into strong references during freezing. This
 is so that an immutable object cannot be effectively mutated by a weakly
@@ -2335,7 +1949,7 @@ loses its object during freezing, we treat this as a failure to freeze
 since the program is effectively racing with the garbage collector.
 
 New Obligations on C Extensions
--------------------------------
+===============================
 
 As immutability support must be opted in, there are no new *obligations* for
 C extensions that do not want to add support for immutability. We use the
@@ -2385,7 +1999,7 @@ sub-interpreter to become accessible to another sub-interpreter.
 
 
 Changes to the C ABI
---------------------
+====================
 
 ``Py_CHECKWRITE(obj)``
    This macro is used to check whether the argument (which must be
@@ -2413,7 +2027,7 @@ These checks take the common form of:
    ... // code that performs the write
 
 Changes to the internal API
----------------------------
+===========================
 
 In addition to these three changes to the public API, there are a few changes
 made to the internal API to aid in the implementation of this PEP. Note that some
@@ -2436,10 +2050,15 @@ of this functionality is exposed via the `immutable` module.
    that this type can be safely frozen, and that any appropriate write barriers
    are in place. Returns `0` on success, or `-1` on error. This is exposed by
    the ``immutable`` module as ``register_freezable``.
-   
-Mapping changes to stages
--------------------------
+``int _PyImmutability_RegisterShallowFreezable(PyTypeObject*)``
+   Registers the type as being shallowly freezable. By calling this, the module indicates
+   that this type is already shallow immutable and no operations can change the state of the object.
+   Returns `0` on success, or `-1` on error. This is exposed by
+   the ``immutable`` module as ``register_shallow_freezable``.
 
+
+Mapping changes to stages
+=========================
 With respect to changes to core Python, stage 2 and 3 are almost
 identical. Stage 3 contains some additional features in the
 immutable library that do not affect core Python, plus minimal
@@ -2448,7 +2067,7 @@ freezable. The list below show the changes to core Python:
 
 
 Stage 1
-~~~~~~~
+-------
 
 - Steal single bit in object header for the mutable /
   deeply immutable flag (*e.g.*, from the refcount)
@@ -2462,12 +2081,8 @@ Stage 1
 - Deeply immutable objects are not added to the cycle
   detector work lists on creation.
 
-Note that we do not freeze dicts in stage 1. This is not
-needed until stage 2 to support user-defined types.
-
-
 Stage 2
-~~~~~~~
+--------
 
 - Steal one more bit in object header needed to
   distinguishing between RC and a pointer to object in the SCC
@@ -2489,18 +2104,138 @@ Stage 2
 
 
 Stage 3
-~~~~~~~
+--------
 
 - Add ``Py_CHECKWRITE`` calls in the code that implements
   the module type and module objects.
 - Making modules and standard types freezable.
 
+Rejected alternatives
+######################
+
+The proposed approach is not the only possible way to add
+immutability to Python. In this section we discuss some
+alternatives that were considered but ultimately rejected.
+
+The primary reason for rejecting these alternatives is that they either do
+not make sufficient guarantees about immutability to protect the subinterpreters
+use case, or that they impose too high a cost on performance.
+
+
+Immutable objects have different types
+======================================
+
+This PEP proposes to make objects immutable in-place. An alternative
+approach would be to create a new type for the immutable version of
+each mutable type. This is epitomised by the existing ``frozenset``,
+which is an immutable version of ``set``.
+
+This approach has several disadvantages:
+
+- It requires duplicating much of the code for each type, leading
+  to code bloat and maintenance issues.
+- It requires copying the entire object graph to create an immutable
+  version of an object, which can be expensive both in time and
+  memory.
+- It requires programmers to change the types they use when they
+  want immutability, leading to code changes and potential
+  compatibility issues.
+
+It also has some advantages:
+
+- It can lead to better performance for immutable objects, as
+  the implementation can be optimized for immutability.  (Implementation could detect
+  dynamic immutability and change the type in-place, but this adds complexity.)
+- It can lead to clearer semantics, as the type of an object clearly
+  indicates whether it is mutable or immutable.
+
+We feel that the disadvantages outweigh the advantages, and that
+making objects immutable in-place is the better approach for Python.
+
+The concept of the state of the type already exists in Python for example,
+a file cannot be read from or written to when it is closed. Thus,
+making an object immutable in-place can be viewed as consistent with existing
+Python mental model.  There are also many places where an API takes a container
+but is not expected to mutate the contents of that container.
+
+We rejected this alternative if favour of the proposed approach due to the performance
+benefits of in-place immutability, and the reduced complexity of not requiring
+an additional set of types.
+
+Deep copy
+=========
+
+Another alternative would be to use a deep copy approach to create
+immutable copies of objects. This would involve creating a new object
+graph that is a deep copy of the original, but with all objects marked
+as immutable.  This similar to the previous, but would not require the creation of a
+separate type for each mutable type.
+
+This has the advantage of not affecting any existing aliases to an object.
+However, it still has the performance overheads of copying the entire object graph.
+
+We rejected this alternative due to the performance overheads of copying.
+We believe the current self-contained checks provide all the balance of not affecting
+existing aliases while still providing immutability guarantees.
+
+
+``__freeze__`` method on objects
+================================
+
+We could expose a ``__freeze__`` method on objects that would be called
+to freeze the object. This would allow objects to implement their own
+freezing logic, and could potentially allow for more efficient freezing
+of certain types.  This would allow for custom types to define how they should be frozen.
+However, this approach has several disadvantages:
+
+- It would not provide a mechanism to safely share objects across
+  sub-interpreters.  This proposal alters reference counting and garbage collection
+  to ensure that immutable objects can be safely shared across sub-interpreters.
+- It would require all types to implement their own freezing logic,
+  leading to code bloat and maintenance issues.
+- It would make it harder to reason about the immutability of objects,
+  as the freezing logic could vary between types.
+- It could lead to inconsistencies in the immutability guarantees
+  provided by different types.
+
+We rejected this alternative due to the lack of guarantees about
+immutability across sub-interpreters, and the increased complexity
+of requiring all types to implement their own freezing logic.
+
+Our proposal provides the pre-freeze hook that allows types to customize
+the freezing process without losing the guarantees about immutability
+across sub-interpreters.
+
+
+Proxies for sharing between sub-interpreters
+============================================
+
+Another alternative would be to use proxies to share objects between
+sub-interpreters. This would involve creating a proxy object in each
+sub-interpreter that forwards operations to the original object in its
+own sub-interpreter. This approach has several disadvantages:
+
+- It would introduce significant overhead for accessing shared
+  objects, as each operation would need to be forwarded through
+  the proxy.
+- For complex object graphs, each individual object would need to be
+  proxied, leading to significant overhead and allocations of proxies.
+- It would complicate the semantics of object identity, as two
+  proxies for the same object may not be the same object.
+
+For contained mutable objects, proxies could provide an additional mechanism
+for sharing state between sub-interpreters.
+
+We rejected this alternative as not part of this PEP, but see it as a
+possible future extension to provide additional mutable sharing mechanisms
+between sub-interpreters.
+
 
 Future extensions and considerations
-====================================
+####################################
 
 Notes on hashing
-----------------
+================
 
 Deep immutability opens up the possibility of any freezable object being
 hashable, due to the fixed state of the object graph making it possible
@@ -2510,7 +2245,7 @@ which should be kept in mind for any future PEPs which build on this
 work at add hashability for immutable objects:
 
 Instance versus type hashability
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+----------------------------------
 
 At the moment, the test for hashability is based upon the presence (or
 absence) of a ``__hash__`` method and an ``__eq__`` method. Places where
@@ -2526,7 +2261,7 @@ types. Handling this in a way that is not surprising will require
 careful design considerations.
 
 Equality of immutable objects
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-------------------------------
 
 One consideration with the naive approach (i.e., hash via id()) is that
 it can result in confusing outcomes. For example, if there were to be
@@ -2545,12 +2280,12 @@ the case. Our opinion is that an approach like that used in tuplehash is
 recommended in order to avoid this behavior.
 
 Types
------
+======
 
 Support for immutability in the type system is worth exploring in the
 future.
 
-Currently in Python, ``x: Foo`` does not give very strong guarantees
+Currently, in Python, ``x: Foo`` does not give very strong guarantees
 about whether ``x.bar(42)`` will work or not, because of Python’s strong
 reflection support that permits changing a class at run-time, or even
 changing the type of an object. Making objects immutable in-place
@@ -2560,40 +2295,27 @@ reflective changes of a class, a ``NotFreezableError`` will point to the
 place in the code where the object was made immutable. This should facilitate
 debugging.
 
-In short: the possibility of making objects immutable in-place does not
-weaken type-based reasoning in Python on a fundamental level. However,
-if immutability becomes very frequently used, it may lead to the
-unsoundness which already exists in Python’s current typing story
-surfacing more frequently.
+The self-contained check performed during freezing ensures that if
+``x`` is frozen, then all objects reachable from ``x`` are also frozen.
+But moreover, there are no aliases to this reachable set of objects.
+This means that it is possible to safely proxy the type at the time of
+freezing.  We can define ``freeze(x: T)`` as updating ``x``s type to ``frozen[T]``, where
+``frozen[T]`` is a type that contains all the non-mutating methods on
+``T``, and it changes the type of those methods such that any reference
+to objects reached from ``x`` are also of frozen type.
 
-There are several challenges when adding immutability to a type system
-for an object-oriented programming language. First, self typing becomes
-more important as some methods require that self is mutable, some
-require that self is immutable (e.g. to be thread-safe), and some
-methods can operate on either self type. The latter subtly needs to
-preserve the invariants of immutability but also cannot rely on
-immutability. We would need a way of expressing this in the type system.
-This could probably be done by annotating the self type in the three
-different ways above – mutable, immutable, and works either way.
-
-A possibility would be to express the immutable version of a type ``T``
-as the intersection type ``immutable & T`` and a type that must preserve
-immutability but may not rely on it as the union of the immutable
-intersection type with its mutable type ``(immutable & T) | T``.
-
-Furthermore, deep immutability requires some form of “view-point
-adaption”, which means that when ``x`` is immutable, ``x.f`` is also
-immutable, regardless of the declared type of ``f``. View-point
-adaptation is crucial for ensuring that immutable objects treat
-themselves correctly internally and is not part of standard type systems
-(but well-researched in academia).
+If the object has opted into strong freezing by setting ``AliasAllowed``,
+then it is possible that there are aliases, and thus the type change
+will lead to exceptions if those aliases are accessed in a mutating way.
+This is the same as the current situation in Python where an object may
+be mutated in unexpected ways that can affect the objects type.
 
 Making freeze a soft keyword as opposed to a function has been proposed
 to facilitate flow typing. We believe this is an excellent proposal to
 consider for the future in conjunction with work on typing immutability.
 
 Data-race free Python
----------------------
+======================
 
 This PEP adds support for immutable objects to Python and importantly
 permits sub-interpreters to directly share *immutable* objects. As a
@@ -2625,7 +2347,7 @@ for deeply immutable data can be seen as the first step towards this
 goal.
 
 Reference implementation
-========================
+########################
 
 Our `reference implementation`_, which we have made publicly available on
 Github, implements all of the features described above (for all three stages).
@@ -2647,7 +2369,7 @@ do not at this moment provide the decorators (*e.g.*, ``@frozen``) at present, t
 they are trivial to implement using the existing tools and functionality.
 
 Open questions to resolve before publishing
-===========================================
+############################################
 
 - Do we cover C extensions enough?
 - Do we need a separate discussion about backwards compatibility?
@@ -2656,3 +2378,10 @@ Open questions to resolve before publishing
 - What about libraries like math, random etc.?
 - Meta classes, ABCMeta in particular
 - Need an example that shows sharing across subinterpreters
+
+Feedback to address
+====================
+- Use tp_traverse to traverse, or add a new type operation that
+  is required for freezable types?
+- Self-contained requires use of reference counting?  This is not something that
+  some python platforms support.  E.g. PyPy?
