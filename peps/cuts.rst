@@ -58,6 +58,53 @@ freezable by setting the ``__freezable__`` field to the value
 
 
 
+Example from Stage 3
+
+.. code-block:: python
+   :caption: **Listing 6:** Freezing propagates.
+
+   def freezable(obj):
+       set_freezable(obj, AliasesAllowed)
+       return obj
+
+   monty = []
+   freezable(monty) # make monty strongly freezable
+
+
+   @freezable
+   class Person:
+       def __init__(self, name):
+           self.name = name
+           monty.append(self)
+
+   eric = Person("Erik")
+   graham = Person("Graham")
+   terry = Person("Terry")
+
+   is_frozen(Person) # False
+   is_frozen(monty) # False
+
+   freeze(Person) # Freeze the Person type
+   is_frozen(Person) # True
+   is_frozen(monty) # False
+   eric.name = "Eric" # OK
+
+   freeze(eric) # Freeze an instance of Person
+   is_frozen(graham) # True - graham is reachable from monty, and monty is reachable from eric.
+   is_frozen(monty) # True
+
+   monty.append(Person("John")) # throws exception because monty is immutable
+   monty.pop()                  # --''--
+
+   terry.name = "John"          # throws exception because all person objects 
+                                # in monty are immutable too
+
+The example above shows that because all instances of ``Person``
+capture the contents of the ``monty`` variable, freezing any person
+object freezes the list of persons, along with all persons in the
+list.
+
+
 
 
 
@@ -541,4 +588,223 @@ immutable, regardless of the declared type of ``f``. View-point
 adaptation is crucial for ensuring that immutable objects treat
 themselves correctly internally and is not part of standard type systems
 (but well-researched in academia).
+
+
+
+Propagation and white-listing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When used on a class, the ``@frozen`` decorator propagates to any
+directly nested declaration, but the ``@freezable`` decorator does
+not. For example,
+
+.. code-block:: python
+
+   @frozen
+   class Foo:
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+is equivalent to
+
+.. code-block:: python
+
+   @frozen
+   class Foo:
+       @frozen # from Foo
+       def frob(self, a, b, c):
+           @frozen # from Foo via frob
+           class Bar:
+               pass
+       @frozen # from Foo
+       class Baz:
+           @frozen # from Foo via Baz
+           def quux(self, a, b, c):
+               pass
+
+Since ``@freezable`` does not propagate,
+
+.. code-block:: python
+
+   @freezable
+   class Foo:
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+does **not** make ``frob``, ``Bar``, ``Baz``, and ``quux``
+``@freezable``. However, note that ``freeze(Foo)`` will
+still work if what gets frozen as a result is self-contained.
+
+Note that white-listing can be used as an alternative to
+decorating the top-level contents of a class, so:
+
+.. code-block:: python
+
+   @freezable("frob", "Baz")
+   class Foo:
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+is equivalent to
+
+.. code-block:: python
+
+   @freezable
+   class Foo:
+       @freezable
+       def frob(self, a, b, c):
+           class Bar:
+               pass
+       @freezable
+       class Baz:
+           def quux(self, a, b, c):
+               pass
+
+Multiple decorators can be used in a nested fashion. If an
+``@freezable`` is used inside an ``@frozen``, the latter takes
+precedence and the result will be frozen. Using an ``@frozen``
+inside an ``@freezable`` will result in a freezable whose
+content are partially frozen.
+
+Arguments are always joined together, so if ``@frozen("a", "b")``
+is nested inside ``@freezable("b", "c")``, the result is
+``@frozen("a", "b", "c")``.
+
+
+Decorator arguments – white listing to enable freeze propagation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Freezable declarations can only be frozen if they do not capture
+mutable state:
+
+.. code-block:: python
+
+   x = [47]
+   y = [11]
+   def foo(a):
+       x.append(a)
+       y.pop()
+   freeze(foo) # fails
+
+With an ``@freezable`` annotation, freezing the function succeeds
+if the mutable state it captures is white-listed, and that state
+can be successfully made immutable.
+
+.. code-block:: python
+
+   x = [47]
+   y = [11]
+   @freezable("x", "y")
+   def foo(a):
+       x.append(a)
+       y.pop()
+   freeze(foo) # succeeds
+
+The behaviour is the same, regardless of whether the variables captured
+are from globals or an enclosing frame.
+
+.. code-block:: python
+
+   def outer():
+       x = [47]
+       y = [11]
+       @freezable("x", "y")
+       def foo(a):
+           x.append(a)
+           y.pop()
+       return foo
+
+   foo = outer()
+   freeze(foo) # succeeds
+
+Explicitly naming what may become immutable as a side-effect of freezing a
+function (or type) can serve as documentation and could be useful input
+to a linter.
+
+Note that the white listing in arguments to ``@freezable`` looks at the
+*contents* of variables (at the time of freezing) so the following works
+as ``x`` and ``y`` alias.
+
+.. code-block:: python
+
+   x = [47]
+   y = x
+   @freezable("x")
+   def foo(a):
+       x.append(a)
+       y.pop()
+   freeze(foo) # succeeds
+
+Also note that we only care about freezing mutable state. If we capture
+a variable outside of the list of permitted variables, but that variable
+contains an immutable object, freezing will not fail. Thus, the second
+call to ``freeze`` below will succeed.
+
+.. code-block:: python
+
+   x = [47]
+   z = [11]
+   y = z
+   @freezable("x")
+   def foo(a):
+       x.append(a)
+       y.pop()
+   freeze(z)   # freeze the list object referenced by y and z
+   freeze(foo) # succeeds
+
+To permit a freezable function to freeze anything that it captures:
+``@freezable("*")``.
+
+Detecting freezing outside of the permitted set
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The decorator can be thought of as an effect annotation, similar to
+a ``throws`` declaration in Java. Now we discuss the meaning of
+capturing variables (referencing mutable objects) which were not
+explicitly listed as OK to freeze.
+
+**Strict:** throw an exception. If a function evolves so that freezing
+it propagates outside of the permitted set, this is a design error that
+should be fixed.
+
+**Relaxed:** replace any captured value outside of the permitted set by
+an immutable dummy value. This permits the function to be made immutable, but
+protects all values we hadn’t explicitly permitted to become immutable.
+This may cause the function to become incapacitated, but
+it also enables writing functions that behave differently depending on
+whether they are immutable or not:
+
+.. code-block:: python
+
+   x = [47]
+   y = [11]
+   @freezable("x")
+   def foo(a):
+       x.append(a)
+       if not is_frozen(foo):
+           y.pop()
+
+Freezing ``foo`` above will not cause ``y`` to become immutable, and the
+function is implemented in such a way that it does not try to mutate
+``y`` if it is immutable. Note that it is not possible to analyse functions
+to see if they might access the dummy value if they are immutable. These
+kinds of errors will always be caught dynamically.
+
+For ``@frozen``, only the strict semantics is meaningful. For
+``@freezable``, there are pros and cons with both.
+
+We propose to go with the strict semantics because it is less complicated,
+but (on the downside) also slightly less permissive.
 
