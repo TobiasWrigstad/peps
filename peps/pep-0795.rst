@@ -455,8 +455,8 @@ Sometimes it is necessary to run some code just before an object
 is frozen. This can be done by calling ``set_pre_freeze_hook``
 with a callable that will be invoked just before freezing the
 object. The callable will be passed the object that is about to be
-frozen as its only argument. The callable may call
-``set_freezable`` on this object, or its contained objects to
+frozen as its only argument. The callable may call perform
+operations on this object, or its contained objects to
 affect whether freezing will succeed or not.
 
 On user defined types, the definition can directly define a
@@ -703,12 +703,17 @@ is defined in the ``immutable`` module. The function sets the
 freezable status of an object. If the status is ``Yes``, then the
 object is freezable. If the status is ``No``, it is not. If the
 status is ``Explicit`` then the object is freezable but only
-through an explicit call to ``freeze()``. If freezing propagates
+through an explicit call to ``freeze()``. Finally, there is
+an option ``Proxy`` that is currently reserved for module
+objects. If freezing propagates
 to an explicitly freezable object, then freezing will fail.
 ``Yes``, ``No`` and ``Explicit`` are all defined in the
 ``immutable`` module. By default, classes are explicitly
 freezable, *i.e.,* as if ``set_freezable(C, Explicit)``
-was called on every class ``C``.
+was called on every class ``C``. Further, modules are
+by default not freezable, *i.e.,* behave as if
+``set_freezable(M, No)`` were called on every module
+``M``.
 
 .. code-block:: python
    :caption: **Listing 7:** Sketch implementation of decorators.
@@ -751,16 +756,28 @@ listing below shows this.
 
 
 This behaviour is different from a function that captures an
-imported module. Unless we cater to this case specifically and
-permit freezing to propagate to module objects, many case of
-freezing would incapacitate modules captured by the functions.
-Before showing our solution, we first illustrate the consequences
-of treating module objects like any other object when freezing:
+imported module. Note that modules are unfreezable by default.
+If we allowed freezing to propagate to module objects, freezing
+would in many cases incapacitate modules captured by the functions.
+
+Modules can be made freezable by ``set_freezable(M, Yes)`` or
+``set_freezable(M, Explicit)``. This permits modules to be shared
+across interpreters. Escape hatches can be used to retain some
+mutable state in an otherwise frozen module. Modules can also be
+made *sharable* by ``set_freezable(M, Proxy)``. This behaviour is
+described below.
+
+Before showing a sharable module, let's first look at what would
+happen if the random module was frozen and had taken no steps internally
+to support that:
 
 .. code-block:: python
-   :caption: **Listing 10:** If freezing a function would propagate to any captured module objects. **Note that this is not what we do!**
+   :caption: **Listing 10:** Freezing a module object can incapacitate the module.
 
+   import immutable
    import random
+
+   immutable.set_freezable(random, immutable.Yes)
 
    @frozen
    def roll():
@@ -768,11 +785,28 @@ of treating module objects like any other object when freezing:
 
    roll() # fails because the random module has been frozen!
 
-Our solution to this problem is to make code like the one in
-Listing 10 work like the one in Listing 9, i.e., as if the import
-statement had been written inside of the function body. This is
-handled transparently in the pre-freeze hook of the default module
-type object.
+In the code above, the programmer makes the random module
+freezable by an explicit call to ``set_freezable``. If the random
+module did not internally protect its mutable state,  the module
+would not be usable to create more random numbers. To protect its
+mutable state against freezing, the module could:
+
+1. Wrap its mutable state in an escape hatch
+2. Perform the installation of the escape hatch in the pre-freeze hook
+3. Turn itself sharable
+
+A sharable module is an immutable proxy object that delegates all
+accesses to it to the (mutable) module on the current sub-interpreter.
+A function *f* that performs ``m.g`` where ``m`` is an immutable proxy
+object will semantically behave similar to ``__import__(m.__name__).g``,
+*i.e.,* look up ``g`` in the current sub-intrepreter's module ``m``.
+If the function *f* is passed to sub-interpreter *s* then calling *f*
+will cause ``m`` to be loaded in *s* (if it was not already).
+
+Making a module sharable installs a pre-freeze hook on the module
+that turns the module object in to a proxy object before freezing it.
+The proxy object is decoupled from the module, so freezing the proxy
+has no effect on the module.
 
 **This is what a module object's pre-freeze hook does on freeze
 to accomplish this:**
@@ -788,26 +822,15 @@ can now be frozen without effecting the mutable state stored in
 transparent to Python code interacting with the module and
 subsequent sharing of *m* is easy as it is deeply immutable.
 
-This avoids the need to refactor Python code into using imports
-inside the functions.
-
-To actually freeze a module, rather than turn it into an immutable
-proxy for a mutable module, the module must "opt-in" by overriding its
-default freeze hook. For example:
+To set its own freezing status, a module can simply operate on
+itself during initialisation.
 
 .. code-block:: python
 
-    def __pre_freeze__(self):
-        pass
-
-This will permit the module to be frozen like a normal object,
-and subsequently shared across different sub-interpreters. To
-freeze oneself, a module can either freeze its module dictionary
-or freeze the entire module object:
-
-.. code-block:: python
-
-    freeze(sys.modules[__name__]) # Freeze module at top-level
+    # in the init part of the module
+    current_module = sys.modules[__name__]
+    set_freezable(current_module, Proxy)
+    freeze(current_module) # Freeze module at top-level
 
 .. _summary-2:
 
@@ -1304,8 +1327,6 @@ freeze.
 Dealing with cyclic dependencies
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**FIXME -- the example below may not be true given how Python works when capturing an undefined name**
-
 Objects that are explicitly freezable can be in a cyclic
 dependency.
 
@@ -1457,11 +1478,12 @@ set, ``is_frozen`` will inspect the sub-objects and return true if
 their ``is_frozen`` check succeeds.
 
 
-The ``set_freezable`` function and the ``Yes``, ``No``, and ``Explicit`` constants
-----------------------------------------------------------------------------------
+The ``set_freezable`` function and the ``Yes``, ``No``, ``Explicit``, and ``Proxy`` constants
+----------------------------------------------------------------------------------------------
 
 Sets the freezable status of an object to either ``Yes``, ``No``,
-or ``Explicit`` (default is ``Yes``).
+or ``Explicit`` (default is ``Yes``). Module objects can also have
+the status ``Proxy``.
 
 
 The ``NotFreezable`` type
