@@ -711,7 +711,7 @@ to an explicitly freezable object, then freezing will fail.
 ``immutable`` module. By default, classes are explicitly
 freezable, *i.e.,* as if ``set_freezable(C, Explicit)``
 was called on every class ``C``. Further, modules are
-by default not freezable, *i.e.,* behave as if
+by default unfreezable, *i.e.,* they behave as if
 ``set_freezable(M, No)`` were called on every module
 ``M``.
 
@@ -757,13 +757,13 @@ listing below shows this.
 
 This behaviour is different from a function that captures an
 imported module. Note that modules are unfreezable by default.
-If we allowed freezing to propagate to module objects, freezing
+If we allowed freezing to propagate to module objects by default, freezing
 would in many cases incapacitate modules captured by the functions.
 
-Modules can be made freezable by ``set_freezable(M, Yes)`` or
+A module ``M`` can be made freezable by ``set_freezable(M, Yes)`` or
 ``set_freezable(M, Explicit)``. This permits modules to be shared
 across interpreters. Escape hatches can be used to retain some
-mutable state in an otherwise frozen module. Modules can also be
+mutable state in an otherwise frozen module. A module can also be
 made *sharable* by ``set_freezable(M, Proxy)``. This behaviour is
 described below.
 
@@ -777,6 +777,7 @@ to support that:
    import immutable
    import random
 
+   # This is pretty uncivilised to call on someone else's module
    immutable.set_freezable(random, immutable.Yes)
 
    @frozen
@@ -1162,36 +1163,36 @@ and (avoiding) immutable modules.
 
 **Propagation rules:**
 
--  Freezing an object propagates to other objects that it can reach,
-   directly or indirectly. This notably includes the type of the object,
-   the functions in the type, and any objects referenced from the object.
--  By default, types only support freezing *directly*, meaning freezing
-   an object fails to not propagate to its type (causing the freezing
-   of the object to fail as well). A type can opt-out of requiring
-   explicit freezing, *e.g.,* through the ``@freezable`` decorator.
+- Freezing an object propagates to other objects that it can reach,
+  directly or indirectly. This notably includes the type of the object,
+  the functions in the type, and any objects referenced from the object.
+- By default, types only support freezing *directly*, meaning freezing
+  an object fails to not propagate to its type (causing the freezing
+  of the object to fail as well). A type can opt-out of requiring
+  explicit freezing, *e.g.,* through the ``@freezable`` decorator.
 
 **Freezing rules:**
 
--  Objects which are explicitly freezable (this includes all type
-   objects) must be frozen explicitly -- not indirectly
-   via freeze propagation. (Other attempts fail.)
--  Freezing an object graph fails if it contains objects that cannot be frozen.
--  An individual object can be made impossible to freeze by setting
-   ``set_freezable(obj, No)``. A convenience decorator ``@unfreezable``
-   is also available.
- - Right before freezing propagates to an object, its ``__pre_freeze__``
-   method will be called if it exists. If freezing fails, effects in
-   the pre-freeze hook persists.
- - By default, freezing a module object turns the module object into
-   a proxy that delegates to a mutable module object on the current
-   sub-intrepreter.
+- Objects which are explicitly freezable (this includes all type
+  objects) must be frozen explicitly -- not indirectly
+  via freeze propagation. (Other attempts fail.)
+- Freezing an object graph fails if it contains objects that cannot be frozen.
+- An individual object can be made impossible to freeze by setting
+  ``set_freezable(obj, No)``. A convenience decorator ``@unfreezable``
+  is also available.
+- Right before freezing propagates to an object, its ``__pre_freeze__``
+  method will be called if it exists. If freezing fails, effects in
+  the pre-freeze hook persists.
+- By default, freezing a module object turns the module object into
+  a proxy that delegates to a mutable module object on the current
+  sub-intrepreter.
 
 **Immutability invariant:**
 
--  An immutable object only references other immutable objects, with the
-   exception of mutable objects that preserve sub-interpreter isolation
-   but are nevertheless marked as immutable in the system. (For example
-   escape hatches.)
+- An immutable object only references other immutable objects, with the
+  exception of mutable objects that preserve sub-interpreter isolation
+  but are nevertheless marked as immutable in the system. (For example
+  escape hatches.)
 
 
 Details and discussion
