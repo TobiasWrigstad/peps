@@ -42,10 +42,10 @@ The main motivation for **deep** immutability is to enable direct
 sharing of immutable objects across sub-interpreters without the
 need of pickling.
 
-We propose that all functionality is exposed via a new built-in
+All functionality is exposed via a new built-in
 module called ``immutable``. This allows each Python implementation
-to decide if they wants to provide immutability or not. We have a
-working implementation of this pep for CPython which we aim to adjust
+to decide if it wants to provide immutability or not. We have a
+working implementation of this PEP for CPython which we aim to adjust
 based on feedback and upstream on acceptance.
 
 Changes from the previous draft
@@ -337,7 +337,7 @@ detector either.
 Adding support for turning mutable objects of user-defined
 types immutable permits creation of immutable cycles. For these
 we introduce a :ref:`different technique to handle cycles <scc>`
-later in this pep.
+later in this PEP.
 
 Register immutable types through C: ``register_shallow_immutable(typ)``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -349,7 +349,7 @@ type may be registered as shallow immutable if it does not contain
 any mutable fields. An ``is_frozen`` check on a type which has
 been registered as shallow immutable will return ``True`` if all
 fields are deeply immutable or fail otherwise. This check is done
-on the first call of ``is_frozen`` on an object, this means that
+on a call to ``is_frozen`` on an object, this means that
 there is no checking cost until immutability is actually used.
 
 Note that checking whether a C type's fields are mutable or not is
@@ -362,15 +362,15 @@ type across sub-interpreters.
 Traversing objects
 ~~~~~~~~~~~~~~~~~~
 
-The changes proposed by this pep require a way to find all objects
+The changes proposed by this PEP require a way to find all objects
 which are reachable from a given object. The existing mechanisms, namely
-``dir()`` and ``tp_traverse``, are not sufficient since they don't
-guarantee to discover all reachable objects. For this we add a new
-function ``tp_reachable`` to C-types. This function needs to be
-implemented by a type to support immutability. It will have the same
-function signature as ``tp_traverse`` which will allow easy migration
+``dir()`` and ``tp_traverse``, are not sufficient since they are not
+guaranteed to discover all reachable objects. For this a new
+function ``tp_reachable`` is added to C-types. This function needs to be
+implemented by a type to support immutability. It has the same
+function signature as ``tp_traverse`` which allows easy migration
 for existing C-types that already visit all reachable fields in
-``tp_traverse``.
+``tp_traverse`` by simply reusing the existing ``tp_traverse``.
 
 Summary -- so far
 ~~~~~~~~~~~~~~~~~
