@@ -1,6 +1,6 @@
 PEP: 795
 Title: Deep Immutability for Efficient Sharing and Concurrency Safety
-Author: Matthew Johnson <matjoh@microsoft.com>, Matthew Parkinson <mattpark@microsoft.com>, Sylvan Clebsch <sylvan.clebsch@microsoft.com>, Fridtjof Peer Stoldt <fridtjof.stoldt@it.uu.se>, Tobias Wrigstad <tobias.wrigstad@it.uu.se>
+Author: Matthew Johnson <matjoh@microsoft.com>, Matthew Parkinson <mattpark@microsoft.com>, Sylvan Clebsch <sylvan.clebsch@microsoft.com>, Fridtjof Stoldt <fridtjof.stoldt@it.uu.se>, Tobias Wrigstad <tobias.wrigstad@it.uu.se>
 Sponsor: Michael Droettboom <mdboom@gmail.com>
 Discussions-To: TBD
 Status: Draft
@@ -30,11 +30,6 @@ There is no way to make an immutable object mutable.
 However, one can make a mutable copy of an immutable object
 using standard Python concepts.
 
-An object's immutability is tracked by a bit in its header. We
-will use one more bit to handle cyclic immutable garbage.
-Both bits can be added without increasing the size of the
-object header.
-
 From now on, we will use immutable to mean deeply immutable, and
 use **shallow immutability** to mean the protection offered by
 tuples and frozen sets in Python 3.14. For example, ``(42,
@@ -44,7 +39,8 @@ creates a mutable object, so while the tuple cannot be updated,
 its list sub-object can.
 
 The main motivation for **deep** immutability is to enable direct
-sharing of immutable objects across sub-interpreters.
+sharing of immutable objects across sub-interpreters without the
+need of pickling.
 
 
 Changes from the previous draft
@@ -61,7 +57,7 @@ DPO`_ and elsewhere. Based on feedback from DPO this rewrite:
    implementers of this PEP
 -  Aims to make the semantics of freezing clearer, and provide more
    examples of how freezing propagates
--  Adds a new design that limits freeze propagation for types
+-  Adds a new design that provides control over freeze propagation
 -  Adds escape hatches and clearly points out who implements them
 -  Motivates the design by linking it clearer to sharing objects across
    sub-interpreters
@@ -121,7 +117,7 @@ short note about this at the end of this document.
 Towards the end of this document we also discuss performance of our prototype
 implementation. As shown in Figure 1 below, sharing objects
 directly by reference across sub-interpreters is considerably faster than
-by picking and unpickling. (See `Performance of immutability`_ for
+by pickling and unpickling. (See `Performance of immutability`_ for
 more details of what this figure actually means.)
 
 .. figure:: pep-0795/scaling.png
@@ -153,7 +149,7 @@ a strict interpretation of immutability, where the
 mutable and immutable “worlds” are kept apart. (Although see
 `Escape hatches`_.)
 
-Immutability is important to allow safe sharing between sub-interpreters.
+**Deep** immutability is important to allow safe sharing between sub-interpreters.
 To illustrate this point, let's assume that it would be possible to
 share a mutable object O across two sub-interpreters (Sub 1 and
 Sub 2) each with their own GIL. Because each sub-interpreter is
@@ -163,10 +159,10 @@ only synchronising with its own GIL, they are not synchronising
 The picture below shows the situation above pictorially – the boxes
 labelled Sub 1 and Sub 2 show the heaps of sub-interpreters 1 and 2.
 Objects A and D are mutable and reside in the heap of Sub 1. Object B is
-mutable and resides in the heap of Sub 2. A and B both point to an
-immutable shared object C. Note that object C
-does not belong to either sub-interpreter, which is why it is drawn
-outside of their heaps.
+mutable and resides in the heap of Sub 2. A and B both point to a
+immutable shared object C that illegally references the mutable object D.
+Note that object C does not belong to either sub-interpreter, which
+is why it is drawn outside of their heaps.
 
 .. figure:: pep-0795/diagram_1.svg
 
@@ -175,22 +171,24 @@ outside of their heaps.
    sub-interpreters, and keeps an illegal reference to a mutable
    object on the heap of one of the sub-interpreters.
 
-A sub-interpreter assumes that accesses to
-the objects in its heap are protected by its GIL. **Note that the reference
+A sub-interpreter assumes that accesses to the objects reachable
+from its heap are protected by its GIL. **Note that the reference
 from C to D is not legal in this PEP, and this example shows what
 happens if it was allowed.** The colours on the dashed arrows show which
 sub-interpreter is using a reference to access an object. We annotate
 the accesses with what GIL is used to synchronise actions on the object.
 Because of the reference from C to D, it is possible to have two
 accesses relying on different GILs for correctness, meaning
-these accesses do not synchronise. In the case of the immutable
-object, this is not a problem: its reference count it managed through
-atomic increments and decrements, and since its fields are immutable,
-they are not subject to data races in the program which could corrupt
-the reference counts of sub-objects unless handled using locks or
-exchanges. If C was a normal Python object, the unsynchronised accesses
-could silently corrupt or crash the Python VM.
+these accesses do not synchronise. Attempts to modify object D from
+different sub-interpreters may lead them to overwrite each other and
+silently corrupt or crash the Python VM. Even just reading the reference
+to D could cause a problem, since the reference count of D is not atomic,
+which could lead to incorrect reference count updates, followed by
+use-after-free bugs.
 
+Immutable objects avoid these problems: their reference count is managed
+though atomic increments and decrements, and since its fields are immutable,
+they are not subject to data races.
 
 Specification
 #############
