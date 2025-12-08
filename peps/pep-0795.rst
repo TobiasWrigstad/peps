@@ -42,6 +42,11 @@ The main motivation for **deep** immutability is to enable direct
 sharing of immutable objects across sub-interpreters without the
 need of pickling.
 
+We propose that all functionality is exposed via a new built-in
+module called ``immutable``. This allows each Python implementation
+to decide if they wants to provide immutability or not. We have a
+working implementation of this pep for CPython which we aim to adjust
+based on feedback and upstream on acceptance.
 
 Changes from the previous draft
 ===============================
@@ -226,7 +231,7 @@ to immutability. In summary:
 Semantics of immutability
 =========================
 
-This PEP partions objects into the categories **mutable** and
+This PEP partitions objects into the categories **mutable** and
 **immutable**. Mutable objects can be updated and reference both
 mutable and immutable objects. Immutable objects cannot be
 updated, and may only point to other immutable objects. Mutable
@@ -264,7 +269,7 @@ can be used to test if an object is deeply immutable.
    # is_frozen(obj) returns True if obj is deeply immutable
    from immutable import is_frozen
 
-   # Creates immutable object --  all subobjects are immutable
+   # Creates immutable object --  all sub-objects are immutable
    p = ("this", 15, "an", "ex parrot")
    is_frozen(p) # True
 
@@ -277,14 +282,13 @@ can be used to test if an object is deeply immutable.
 
    # Create deeply immutable tuple of named tuples
    monty = (Person("Eric"), Person("Graham"), Person("Terry"))
-   is_frozen(monty) # returns True -- all subobjects are immutable
+   is_frozen(monty) # returns True -- all sub-objects are immutable
 
 For clarity, while all of the objects above except for the dictionary
 are de-facto immutable today in Python, these cannot be safely shared
-across sub-interpreters without the changes proposed by this PEP. As the
-``n`` tuple contains a mutable dictionary it is **not** deeply immutable
-and therefore not safe to share between sub-interpreters -- even with the
-changes this PEP proposes.
+across sub-interpreters without the changes proposed by this PEP. The
+``n`` tuple contains a mutable dictionary and is, therefore, **not**
+deeply immutable and therefore not safe to share between sub-interpreters.
 
 
 Sharing of Types
@@ -294,7 +298,7 @@ To share an object it has to be deeply immutable. Recall that this means
 that all objects reachable from it has to be deeply immutable too -- including the
 type object stored in its ``__class__`` attribute. All types of the
 currently de-facto immutable objects are immutable (*i.e.*, the type has
-the ``Py_TPFLAGS_IMMUTABLE_TYPE`` set) and can therefore
+the ``Py_TPFLAGS_IMMUTABLE_TYPE`` flag set) and can therefore
 be made safe to share across sub-interpreters while being consistent with
 the definition of deep immutability and not breaking existing code.
 
@@ -314,25 +318,26 @@ Dealing with cycles
 ~~~~~~~~~~~~~~~~~~~
 
 Because each sub-interpreter assumes exclusive access to objects while
-it performs cycle dectection, immutable objects cannot be part of cycle
-detection. By keeping sub-interpreter's cycle detection isolated from
-each other, we also avoid having to stop all sub-interpreters to perform
-cycle detection. To this end, immutable objects are "removed" from
-work-list of the cycle dector.
+it performs cycle detection, immutable objects cannot be part of cycle
+detection. The per sub-interpreter cycle detection avoids the need to
+stop all interpreters to perform cycle detection. However, this means
+that immutable objects accessible from multiple interpreters have to be
+handled differently. To this end, we "removed" all immutable objects from
+the work-list of the cycle detector.
 
 When objects are immutable at creation, immutable object graphs
-cannot contain cycles. Therefore, immutable objects of built-in types
-do not need to participate in cycle detection without any risk of creating
-memory leaks. Adding support for turning mutable objects of user-defined
-types immutable permits creation of immutable cycles. There
-we introduce a :ref:`different technique to handle cycles <scc>`.
-
-There are a handful of types that form cycles in the CPython
+cannot contain cycles. These can therefore be removed from cycle
+detection without any risk of creating memory leaks.
+There are a handful of types that contain cycles in the CPython
 implementation, such as ``tuple``, ``type``, and ``object``. These
 cycles are part of the static initialization of the interpreters
 and are immortal, so they do not need to be managed by the cycle
-detector.
+detector either.
 
+Adding support for turning mutable objects of user-defined
+types immutable permits creation of immutable cycles. For these
+we introduce a :ref:`different technique to handle cycles <scc>`
+later in this pep.
 
 Adding immutable types through C: ``register_shallow_immutable(typ)``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
