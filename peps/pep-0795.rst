@@ -339,7 +339,7 @@ types immutable permits creation of immutable cycles. For these
 we introduce a :ref:`different technique to handle cycles <scc>`
 later in this pep.
 
-Adding immutable types through C: ``register_shallow_immutable(typ)``
+Register immutable types through C: ``register_shallow_immutable(typ)``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The function ``register_shallow_immutable(typ)`` allows modules
@@ -347,18 +347,30 @@ that have immutable types implemented through C to register them
 as such, so that they can be shared across sub-interpreters. A
 type may be registered as shallow immutable if it does not contain
 any mutable fields. An ``is_frozen`` check on a type which has
-been registered as shallow immutable will fail unless its fields
-contain deeply immutable objects only. (**FIXME** This is handled
-automatically by the ``is_frozen`` function using the built in
-``tp_traverse``.)
+been registered as shallow immutable will return ``True`` if all
+fields are deeply immutable or fail otherwise. This check is done
+on the first call of ``is_frozen`` on an object, this means that
+there is no checking cost until immutability is actually used.
 
 Note that checking whether a C type's fields are mutable or not is
 beyond the possibilities of this function. It simply accepts this
 assertion from the programmer. If a type was incorrectly
-registered as shallow immutable, it could lead to undefined
+registered as shallow immutable, it can lead to undefined
 behaviour, including crashes and memory corruption, when using the
 type across sub-interpreters.
 
+Traversing objects
+~~~~~~~~~~~~~~~~~~
+
+The changes proposed by this pep require a way to find all objects
+which are reachable from a given object. The existing mechanisms, namely
+``dir()`` and ``tp_traverse``, are not sufficient since they don't
+guarantee to discover all reachable objects. For this we add a new
+function ``tp_reachable`` to C-types. This function needs to be
+implemented by a type to support immutability. It will have the same
+function signature as ``tp_traverse`` which will allow easy migration
+for existing C-types that already visit all reachable fields in
+``tp_traverse``.
 
 Summary -- so far
 ~~~~~~~~~~~~~~~~~
@@ -2256,7 +2268,7 @@ defined in the appropriate public headers.
 .. _reference implementation: https://github.com/mjp41/cpython/tree/immutable-main
 
 Making various types in the core and the standard library freezable (and adding/augmenting
-tests) make up the majority of the other changes. We also expose the immutabiliity
+tests) make up the majority of the other changes. We also expose the immutability
 functionality as the ``immutable`` module, which includes the ``NotFreezable`` type, the
 ``freeze`` method, the ``register_freezable`` method, and the ``isfrozen`` method. Notably, we
 do not at this moment provide the decorators (*e.g.*, ``@frozen``) at present, though
