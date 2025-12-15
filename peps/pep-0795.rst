@@ -429,27 +429,23 @@ construction time, simply wrap its construction inside a freeze
 call.
 
 To make a type immutable immediately at creation time, a decorator
-``@frozen`` can be used. When a type is declared ``@frozen``, all
-its containing methods are implicitly declared ``@frozen`` as
-well. The decorators, the ``freeze()`` function, along with other
-utilities described later in this document are in a module called
-``immutable``.
+``@frozen`` can be used. The decorators, the ``freeze()`` function,
+along with other utilities described later in this document are in
+a module called ``immutable``.
 
 An immutable type may not reference mutable state, and
 additionally does not permit adding, removing or changing
-functions. Immutable types may not inherit from mutable
-types, but may have mutable subtypes.
+functions. Immutable types may not inherit from mutable types,
+but may have mutable subtypes. The ``object`` class and the
+``type`` meta class are immutable but default as described above.
 
 This PEP includes `escape hatches`_ that relax the restrictions on
 capturing mutable state in functions and types. Note that while we
 did not discuss immutable functions much when we limited ourselves
-to built-in types, they were
-already there as part of the immutable type objects. Since those
-functions in those types are part of core Python, it is easy to
-ensure that these are well-behaved with respect to this PEP
-(without changing them in observable ways).
+to built-in types, they were already there as part of the immutable
+type objects.
 
-With freezable objects and ``freeze()`` and ``@frozen`` come the
+With freezable objects, ``freeze()`` and ``@frozen`` come the
 issue of *freeze propagation*, meaning what freezable objects can
 be made immutable as a side-effect of making something else
 immutable. For example, consider the figure below, ``freeze(x)``
@@ -478,24 +474,25 @@ On user defined types, the definition can directly define a
 ``__pre_freeze__`` method that will be called as the pre-freeze
 hook.
 
-The listing below shows the pre-freeze hook used to ensure
-that freezing an *instance* of Foo will freeze the Foo *type*
-which requires explicit freezing, *i.e.,* it shows a possible
-implementation of the ``@freezable`` decorator.
+The listing below shows the pre-freeze hook which errors if the value
+field is not filled and populates a cache.
 
 .. code-block:: python
    :caption: **Listing 7:** Freezing propagates.
 
-   def freezable(obj):
-       obj.__pre_freeze__ = lambda o : freeze(o)
-       return obj
-
    @freezable
    class Foo:
-       pass
+       def __init__(self, field):
+         self.field = field
+       def __pre_freeze__(self):
+           # Dynamically fail freezing based on field content
+           if self.field is None:
+               raise RuntimeError("Attempted to freeze empty foo")
+           # Precompute some values
+           self.cache = hash(field)
 
    f = Foo()
-   freeze(f) # Will succeed even though Foo requires explicit freezing
+   freeze(f)
 
 Note that if a freeze fails because at least one object is not
 allowed to be frozen, then the system will ensure none of the
