@@ -505,8 +505,8 @@ Immutable functions
 
 An immutable function is a normal function that can be passed both
 mutable and immutable arguments. It is free to mutate newly
-created objects or any mutable arguments -- but it may not capture
-a reference to mutable state as part of the function object.
+created objects or any mutable arguments -- but it may not capture or
+store a reference to mutable state as part of the function object.
 Really, an immutable function is more of a "sharable function".
 Making a function immutable does not prevent optimisations etc.
 which rely on mutating the code object. However, such optimisation
@@ -542,7 +542,7 @@ C is ``die_roll`` and D is ``random`` or the list in ``x``.
 technically worse as each function object has a reference to the
 globals dictionary of its defining sub-interpreter, so
 ``die_roll.__globals__["y"].append(5)`` will add to the list in
-``x``.) Since types consist mostly of functions, and we need to
+``y``.) Since types consist mostly of functions, and we need to
 share types to share objects, we need a notion of immutable
 functions in this PEP as well.
 
