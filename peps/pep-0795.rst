@@ -372,6 +372,8 @@ function signature as ``tp_traverse`` which allows easy migration
 for existing C-types that already visit all reachable fields in
 ``tp_traverse`` by simply reusing the existing ``tp_traverse``.
 
+.. _summary-1:
+
 Summary -- so far
 ~~~~~~~~~~~~~~~~~
 
@@ -483,7 +485,7 @@ field is not filled and populates a cache.
    @freezable
    class Foo:
        def __init__(self, field):
-         self.field = field
+           self.field = field
        def __pre_freeze__(self):
            # Dynamically fail freezing based on field content
            if self.field is None:
@@ -628,7 +630,7 @@ supported since the value is immutable.
    d = Die(6)
    is_frozen(d) # False
    d.roll() # will return a number in [1,6]
-   d.change_sides(12) # OK
+   d.set_sides(12) # OK
 
    # freeze(d) -- will fail unless Die is @frozen or @freezable
 
@@ -639,7 +641,7 @@ supported since the value is immutable.
    freeze(d) # turns the object d points to deeply immutable
    is_frozen(d) # True
    d.roll() # will return a number in [1,12]
-   d.change_sides(6) # will raise an exception
+   d.set_sides(6) # will raise an exception
 
 Right before ``freeze(Die)``, we have the following object graph (with
 some simplifications to reduce clutter -- recall that immutable objects
@@ -677,55 +679,73 @@ Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj``, not a copy.
 (For convenience, ``freeze(obj)`` also returns a reference to ``obj``.)
 
 
-Unfreezable and explicitly freezable objects
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Freezability - Unfreezable and explicitly freezable objects
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Sometimes a function or object should not be freezable as
-there is no sensible use case for making it immutable. Consider a
-function that increments a ``nonlocal`` variable. This function
-can never be used safely once it has been made immutable.
-
-The ``@unfreezable`` decorator can be used to ensure that the
-function is never accidentally frozen.
+The immutable module provides the ``set_freezable(obj, status=Yes)``
+function which will control if and how an object is freezable. Most
+objects are freezable by default, meaning that freezing can propagate
+to them. However, functions and types are explicitly freezable by
+default (``set_freezable(obj, Explicit)``) meaning that freezing
+will never propagate to them and they can only be frozen when they
+are explicitly passed in to ``freeze()``. Objects can also be marked as
+unfreezable (``set_freezable(obj, No)``) which will result in an error
+when someone attempts to freeze the object. The values for ``Yes``,
+``No`` and ``Explicit`` will be provided from the immutable module.
+The listing below shows the effects of freezability:
 
 .. code-block:: python
-   :caption: **Listing 6:** Examples of opting out of freezing.
-
-   x = 42
-   @unfreezable
-   def foo():
-       nonlocal x
-       x += 1
-       return x
-
-   is_frozen(foo) # False
-   freeze(foo) # Fails "foo is unfreezable"
-
+   :caption: **Listing 6:** Examples of freezability
    class Cell:
        def __init__(self, value):
            self.value = value
 
-   c = Cell(42)
-   unfreezable(c) # call to decorator function
-   freeze(c) # Fails "object is unfreezable"
+   val = {"1": "One"}
+   c = Cell(val)
 
-The ``@freezable`` and ``@unfreezable`` decorators are implemented
-in terms of the function ``set_freezable(obj, status=Yes)`` which
-is defined in the ``immutable`` module. The function sets the
-freezable status of an object. If the status is ``Yes``, then the
-object is freezable. If the status is ``No``, it is not. If the
-status is ``Explicit`` then the object is freezable but only
-through an explicit call to ``freeze()``. Finally, there is
-an option ``Proxy`` that is currently reserved for module
-objects. If freezing propagates
-to an explicitly freezable object, then freezing will fail.
-``Yes``, ``No`` and ``Explicit`` are all defined in the
-``immutable`` module. By default, classes are explicitly
-freezable, *i.e.,* as if ``set_freezable(C, Explicit)``
-was called on every class ``C``. Further, modules are
-by default unfreezable, *i.e.,* they behave as if
-``set_freezable(M, No)`` were called on every module
-``M``.
+   freeze(c) # 💥 Fails since the `Cell` class is explicitly freezable
+
+   freeze(Cell)
+   freeze(c) # Succeeds since `Cell` was explicitly frozen
+   is_frozen(val) # Val is now frozen as well
+
+   val = {"2": "Two"}
+   set_freezable(val, Explicit)
+   c = Cell(val)
+
+   freeze(c) # 💥 Fails because c references val which needs explicit freezing
+
+   freeze(val) # Works because it's explicitly freezable
+   freeze(c) # Works since the referenced value is already frozen
+
+   val = {"3": "Three"}
+   set_freezable(val, No)
+   c = Cell(val)
+
+   freeze(c) # 💥 Fails because val is not freezable
+   freeze(val) # 💥 Fails because val is not freezable
+
+Types are by default explicitly freezable, this also prevents all
+instances of the type from being immutable, until the type has been
+frozen. Functions by default also need to be explicitly frozen, this
+is done to prevent accidentally freezing values captured by functions.
+Some functions will also break, when they're frozen, for example
+functions that modify captured state using the `global` or `nonlocal`
+keywords. Note that freezing a type will propagate to the methods
+without needing to call freeze on each method explicitly.
+
+Modules are unfreezable by default and require the authors to opt-in
+to immutability. Modules are discussed further in :ref:`modules`
+
+The ``immutable`` module will provide decorators to easily change
+freezability and act as documentation on the function or type. These
+decorators are:
+
+-  ``@frozen``: Freezes the function/type after creation
+-  ``@freezable``: Allows freezing to propagate to the type
+-  ``@unfreezable``: Prevents the type/function from being frozen
+
+Here is a sketch of how the decorators may be implemented:
 
 .. code-block:: python
    :caption: **Listing 7:** Sketch implementation of decorators.
@@ -739,13 +759,11 @@ by default unfreezable, *i.e.,* they behave as if
        return obj
 
    def frozen(obj):
-       set_freezable(obj, Explicit)
+       set_freezable(obj, Yes)
        freeze(obj)
        return obj
 
-
-.. _summary-1:
-
+.. _modules:
 
 Frozen functions capturing module state
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
