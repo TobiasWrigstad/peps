@@ -1507,7 +1507,7 @@ As part of freezing, we perform an analysis of the object graph that
 finds the strongly connected components in the graph that becomes immutable.
 A strongly connected component is essentially a cycle where every object
 can directly or indirectly reach all other objects in the component.
-This means that all objetcs in a strongly connected component will have
+This means that all objects in a strongly connected component will have
 exactly the same lifetime. This in turns mean that we can use a single
 reference count to manage the lifetime of all the objects in the
 component. This means that no cycle detection is needed for immutable
@@ -1536,13 +1536,6 @@ The ``set_freezable`` function and the ``Yes``, ``No``, ``Explicit``, and ``Prox
 Sets the freezable status of an object to either ``Yes``, ``No``,
 or ``Explicit`` (default is ``Yes``). Module objects can also have
 the status ``Proxy``.
-
-
-The ``NotFreezable`` type
--------------------------
-
-This is the exception type that ``freeze`` or ``@frozen`` throws when
-failing to freeze an object.
 
 
 The ``disabled`` context manager
@@ -1890,23 +1883,11 @@ In addition to these three changes to the public API, there are a few changes
 made to the internal API to aid in the implementation of this PEP. Note that some
 of this functionality is exposed via the `immutable` module.
 
-``int _PyType_HasExtensionSlots(PyTypeObject*)``
-   This function determines whether the type contains any custom
-   extension slots which were not inherited from its base or meta classes.
-   Returns ``1`` if any custom extension slots are found, ``0`` otherwise.
-``_PyNotFreezable_Type``
-   This is a special base type which is used to indicate that a subtype cannot
-   be frozen. It is exposed to via the ``immutable`` module as ``NotFreezable``.
 ``int _PyImmutability_Freeze(PyObject*)``
    This function Freezes the entire object graph it is passed as an argument.
    On success, it will return ``0``. If there is an error, it will roll back the
    any changes it has made and return an error code of ``-1``. This is exposed by
    the ``immutable`` module as the ``freeze`` function.
-``int _PyImmutability_RegisterFreezable(PyTypeObject*)``
-   Registers the type as being freezable. By calling this, the module indicates
-   that this type can be safely frozen, and that any appropriate write barriers
-   are in place. Returns `0` on success, or `-1` on error. This is exposed by
-   the ``immutable`` module as ``register_freezable``.
 ``int _PyImmutability_RegisterShallowFreezable(PyTypeObject*)``
    Registers the type as being shallowly freezable. By calling this, the module indicates
    that this type is already shallow immutable and no operations can change the state of the object.
