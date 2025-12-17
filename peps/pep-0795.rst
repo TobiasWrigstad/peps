@@ -1484,16 +1484,21 @@ changes to core Python.
 The ``freeze`` function
 -----------------------
 
-The ``freeze`` function is arguably the most important function in this
-PEP. A call to ``freeze(obj)`` will traverse the object graph starting
-in ``obj``; it follows the *propagation rules* to determine how far
-freezeing ``obj`` may propagate, and it follows the *freezing rules* to
-determine whether an object can become immutable or not. If in the end, ``obj``
-would fail to meet the *immutability invariant*, the entire freeze
-operation fails, and ``obj`` is left in state it was right before the
-call. (Modulo changes made though ``__pre_freeze__()`` hooks.)
+The ``freeze`` function is arguably the most important function
+in this PEP. A call to ``freeze(obj, ...)`` will traverse the
+object graph starting in ``obj``. For each object it will check
+the freezability of the object, if the object is freezable, the
+pre-freeze hook of the object will be called. The function accepts
+multiple objects as arguments, all object given to the function are
+considered to be explicitly frozen, meaning that they can be frozen
+even if their freezability is ``Explicit``.
 
-When an object is immutable, we set the bit in its header that is used
+If freezing fails, meaning ``obj`` can't fulfil the *immutable invariant*,
+all objects will be left in the mutability state they were right
+before the call. Changes made by the pre-freeze hook will not be
+undone.
+
+When freezing succeeds, we set the bit in its header that is used
 to track the immutability status. All writes to fields in objects are
 expected to check the status of this bit, and raise an
 exception instead of carrying out the field write when the bit is set.
