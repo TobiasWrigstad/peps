@@ -1800,51 +1800,29 @@ since the program is effectively racing with the garbage collector.
 New Obligations on C Extensions
 ===============================
 
-As immutability support must be opted in, there are no new *obligations* for
-C extensions that do not want to add support for immutability. We use the
-existing cycle detection infrastructure (*i.e.*, implementation of
-``tp_traverse`` and other elements as described documentation on
-`supporting cycle detection`_.
+As immutability support must be opted in, there are no new *obligations*
+for C extensions that do not want to add support for immutability.
+C modules that do want to support immutability need to do several things:
 
-.. _supporting cycle detection: https://docs.python.org/3/c-api/gcsupport.html#supporting-cycle-detection
+- C-types must provide the new ``tp_reachable`` function. (Most modules
+  will be able to reuse the existing ``tp_traverse``). See: `Traversing objects`_
+- The module object itself must me marked as freezable by setting freezable
+  to either ``Yes``, ``Explicit`` or ``Proxy``
+- Add write-barriers (``Py_CHECKWRITE(obj)``) that check for mutability
+  before they modify the state of any C-object. This is only needed for
+  C-objects which can be made immutable.
 
-Because our implementation builds on information available to the
-CPython cycle detector, types defined through C code will support
-immutability “out of the box” as long as they use Python standard types
-to store data and uses the built-in functions of these types to modify
-the data.
+Note that the freezability also has an effect on how module state can be
+accesses. A freezability of ``Yes`` and ``Explicit`` may result in multiple
+sub-interpreters accessing the (frozen) module object at once. The ``Proxy``
+mode will ensure that each mutable module object is only accessed by one
+interpreter at a time.
 
-To make its instances freezable, a type that uses C extensions that adds
-new functionality implemented in C must register themselves using
-``register_freezable(type)``. Example:
-
-.. code-block:: python
-   :caption: **Listing 22:**
-
-   PyObject *register_freezable = _PyImport_GetModuleAttrString("immutable", "register_freezable");
-   if(register_freezable != NULL)
-   {
-       PyObject* result = PyObject_CallOneArg(register_freezable, (PyObject *)st->Element_Type);
-       if(result == NULL){
-           goto error;
-       }
-       Py_DECREF(register_freezable);
-   }
-
-If you construct a C type using freezable metaclasses it will itself be
-freezable, without need for explicit registration.
-
-To properly support immutability, C extensions that directly write to
-data which can be made immutable should add the ``Py_CHECKWRITE`` macro
-shown above on all paths in the code that lead to writes to that data.
-Notably, if C extensions manage their data through Python objects, no
-changes are needed.
-
-C extensions that define data that is outside of the heap traced by the
-CPython cycle detector should either manually implement freezing by
-using ``Py_CHECKWRITE`` or ensure that all accesses to this data is
-*thread-safe* and that it does not cause a mutable object from one
-sub-interpreter to become accessible to another sub-interpreter.
+C extensions are allowed to store mutable state, this is how escape
+hatches can be implemented. However, they have to ensure that all
+accesses to this data is *thread-safe* and that it does not cause
+a mutable object from one sub-interpreter to become accessible to
+another sub-interpreter.
 
 
 Changes to the C ABI
@@ -1855,9 +1833,9 @@ Changes to the C ABI
    castable to `Py_Object *`) has its immutable bit set. If the
    argument is immutable, this evaluates to ``false``. If the argument
    is writeable, it evalutes to ``true``.
-``_Py_IsImmutable(obj)``
-   This macro is used to check whether the argument (which must be
-   castable to `Py_Object *`) has its immutable bit set.
+``Py_IsImmutable(obj)``
+   This macro is used to check whether the argument has its immutable
+   bit set.
 ``PyErr_WriteToImmutable(PyObject* obj)``
    This raises an error of the form ``object of type %s is immutable``.
 
@@ -1867,7 +1845,7 @@ adding checks to any methods or functions which mutate objects of that type.
 These checks take the common form of:
 
 .. code-block:: c
-   :caption: **Listing 23:** Example of call to ``Py_CHECKWRITE``.
+   :caption: **Listing 22:** Example of call to ``Py_CHECKWRITE``.
 
    if (!Py_CHECKWRITE(op)) {        // perform the check
        PyErr_WriteToImmutable(op);  // raise the error if the check fails
@@ -1910,8 +1888,8 @@ Immutability for Built-in Types
 - RC manipulating macros are updated with a branch for
   deeply immutable objects where RC manipulations use
   atomic operations.
-- Deeply immutable objects are not added to the cycle
-  detector work lists on creation.
+- Deeply immutable objects are removed from the cycle
+  detector when they get frozen.
 
 Immutability for User-Defined Types
 -----------------------------------
@@ -1924,7 +1902,7 @@ Immutability for User-Defined Types
 - All freezable Python objects must have calls to
   ``Py_CHECKWRITE`` inserted on all paths to mutation to
   be able to stop attempts at mutating deeply immutable
-  objects. This requires changes in XX places in core
+  objects. This requires changes in ~150 places in core
   Python. In particular, dictionaries, lists, and sets
   are updated to perform ``Py_CHECKWRITE`` calls in the
   appropriate places.
