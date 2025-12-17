@@ -786,20 +786,30 @@ listing below shows this.
 
 
 This behaviour is different from a function that captures an
-imported module. Note that modules are unfreezable by default.
-If we allowed freezing to propagate to module objects by default, freezing
-would in many cases incapacitate modules captured by the functions.
+module object imported in the outer scope. Note that modules
+are unfreezable by default. If we allowed freezing to propagate
+to module objects by default, freezing would in many cases
+incapacitate modules captured by the functions.
 
-A module ``M`` can be made freezable by ``set_freezable(M, Yes)`` or
-``set_freezable(M, Explicit)``. This permits modules to be shared
-across interpreters. Escape hatches can be used to retain some
-mutable state in an otherwise frozen module. A module can also be
-made *sharable* by ``set_freezable(M, Proxy)``. This behaviour is
-described below.
+A author can allow freezing of their module by setting the
+freezability during module initialisation using the
+``set_freezable()`` function. Modules that opt-in to freezing
+can easily be shared across sub-interpreters like other
+immutable objects. `Escape hatches`_ can be used to retain some
+mutable state in an otherwise frozen module.
 
-Before showing a sharable module, let's first look at what would
-happen if the random module was frozen and had taken no steps internally
-to support that:
+Some modules may support multiple sub-interpreters but not
+freezing the module state. This PEP introduces the ``Proxy``
+freezability specific to modules which supports these cases,
+by turning the modules into proxy objects that import the
+module on demand very similar to the one behaviour proposed
+by `PEP 810`_ for lazy imports.
+
+.. _PEP 810: https://peps.python.org/pep-0810/
+
+Before showing how ``set_freezable(module, Proxy)`` works, let's
+first look at what could happen if the random module with its state
+would be frozen without any internal changes to support this:
 
 .. code-block:: python
    :caption: **Listing 10:** Freezing a module object can incapacitate the module.
@@ -817,27 +827,33 @@ to support that:
    roll() # fails because the random module has been frozen!
 
 In the code above, the programmer makes the random module
-freezable by an explicit call to ``set_freezable``. If the random
-module did not internally protect its mutable state,  the module
-would not be usable to create more random numbers. To protect its
-mutable state against freezing, the module could:
+freezable by an explicit call to ``set_freezable()``. However,
+the top-level ``random()`` function requires the module state
+to be mutable. Any future calls to random would fail, as the
+internal state can no longer be mutated.
 
-1. Wrap its mutable state in an escape hatch
-2. Perform the installation of the escape hatch in the pre-freeze hook
-3. Turn itself sharable
+The module could use `escape hatches`_ for its mutable state or
+use the ``Proxy`` mode. This mode allows the module object to be
+frozen but keeps the underlying module state mutable. Any accesses
+to the frozen module object will be delegated to the (mutable)
+module state of the current sub-interpreter. An expression like
+``module.function()`` will then be semantically equivalent to
+``__import__(module.__name__).function()``. This will retrieve the
+mutable module state of the sub-interpreter and import the module
+on demand if this is the first usage of the module on the given
+sub-interpreter.
 
-A sharable module is an immutable proxy object that delegates all
-accesses to it to the (mutable) module on the current sub-interpreter.
-A function *f* that performs ``m.g`` where ``m`` is an immutable proxy
-object will semantically behave similar to ``__import__(m.__name__).g``,
-*i.e.,* look up ``g`` in the current sub-intrepreter's module ``m``.
-If the function *f* is passed to sub-interpreter *s* then calling *f*
-will cause ``m`` to be loaded in *s* (if it was not already).
+This proxy mode basically turns the ``roll()`` function from
+**Listing 10** into the ``roll()`` function from **Listing 9**
+that moved the import statement into the function. In this way
+it is basically the same as the behaviour from `PEP 810`_ for
+lazy imports.
 
-Making a module sharable installs a pre-freeze hook on the module
+The proxy mode will work by installing a pre-freeze hook on the module
 that turns the module object in to a proxy object before freezing it.
 The proxy object is decoupled from the module, so freezing the proxy
 has no effect on the module.
+
 
 **This is what a module object's pre-freeze hook does on freeze
 to accomplish this:**
@@ -858,10 +874,9 @@ itself during initialisation.
 
 .. code-block:: python
 
-    # in the init part of the module
-    current_module = sys.modules[__name__]
-    set_freezable(current_module, Proxy)
-    freeze(current_module) # Freeze module at top-level
+   # in the init part of the module
+   current_module = sys.modules[__name__]
+   set_freezable(current_module, immutable.Proxy)
 
 .. _summary-2:
 
@@ -872,24 +887,25 @@ In addition to the immutability support for built-in types:
 
 - Mutable, freezable objects can be made immutable if all the state
   reachable from them can be made immutable.
-- Making an object immutable blocks subsequent mutation of the object.
-- Declarations (types and functions) can be made immutable, either by
-  calling ``freeze()`` or by declaring them ``@frozen``. For ``freeze()``
-  to work indirectly on types, the types must first have been made freezable
-  by ``@freezable`` or ``set_freezable()``.
 - Immutable types and function may not capture references to mutable state.
+- Making an object immutable blocks subsequent mutation of the object.
+- Declarations (types and functions) can be made immutable but require an
+  explicit call to ``freeze()`` by default.
+- The ``@frozen`` decorator can be used to freeze a function or type directly
+  after creation.
+- The ``@freezable`` can be used to allow implicit freezing of types and
+  functions. While the ``@unfreezable`` decorator can be used to prevent
+  freezing under all circumstances.
 - An immutable class’s functions are all immutable, and methods cannot
   be added, removed, or changed.
 - Instances of immutable types are mutable at creation but can be
   made immutable (unless they have been made unfreezable).
-- Certain types are frozen such as ``dict``, ``list``, ``function``, etc.
+- Certain types are frozen by default such as ``dict``, ``list``, ``function``, etc.
 - Any object can have a pre-freeze hook that can be used to run
-  code just before an object is frozen.
-- When a frozen function captures a module object, the module
-  object is not frozen, but rather turned into an immutable proxy
-  that delegates interaction with it back to the mutable module
-  on the current sub-interpreter.
-
+  code just before an object is frozen or fail freezing.
+- Modules are unfreezable by default but can opt-in to freezing.
+- Modules have a special proxy freezability which will delegate any
+  accesses to the mutable module on the current sub-interpreter. 
 
 Escape hatches
 ==============
