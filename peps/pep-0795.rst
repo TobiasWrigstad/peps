@@ -1204,10 +1204,11 @@ mutable, but it is possible to create a mutable copy.
 
 To this end, we introduced freeze propagation through a
 ``freeze()`` function or a ``@frozen`` decorator to make
-mutable objects, types, and functions immutable. A pre-freeze
+mutable objects, types, and functions immutable right after
+creation. A pre-freeze
 hook can be used for fine-grained control over freezing behaviour.
 We used the pre-freeze hook both to implement immutable functions
-and (avoiding) immutable modules.
+and a proxy mode for modules.
 
 
 **Propagation rules:**
@@ -1232,16 +1233,16 @@ and (avoiding) immutable modules.
 - Right before freezing propagates to an object, its ``__pre_freeze__``
   method will be called if it exists. If freezing fails, effects in
   the pre-freeze hook persists.
-- By default, freezing a module object turns the module object into
-  a proxy that delegates to a mutable module object on the current
-  sub-intrepreter.
+- Modules are by default not freezable, but they have a special freezability
+  called ``Proxy`` that forwards all accesses to the sub-interpreter
+  local state and imports the module on demand.
 
 **Immutability invariant:**
 
 - An immutable object only references other immutable objects, with the
   exception of mutable objects that preserve sub-interpreter isolation
   but are nevertheless marked as immutable in the system. (For example
-  escape hatches.)
+  `escape hatches`_.)
 
 
 Details and discussion
