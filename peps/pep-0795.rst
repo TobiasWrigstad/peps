@@ -357,7 +357,9 @@ beyond the possibilities of this function. It simply accepts this
 assertion from the programmer. If a type was incorrectly
 registered as shallow immutable, it can lead to undefined
 behaviour, including crashes and memory corruption, when using the
-type across sub-interpreters.
+type across sub-interpreters. This function also requires that
+the module itself is freezable (See: `freezable`_), since all
+C-types have a reference to the module that defined them.
 
 Traversing objects
 ~~~~~~~~~~~~~~~~~~
@@ -678,6 +680,7 @@ variable to change. However, as indicated by the blue reference arrow,
 Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj``, not a copy.
 (For convenience, ``freeze(obj)`` also returns a reference to ``obj``.)
 
+.. _freezable:
 
 Freezability - Unfreezable and explicitly freezable objects
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
