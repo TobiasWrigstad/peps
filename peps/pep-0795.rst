@@ -154,20 +154,26 @@ a strict interpretation of immutability, where the
 mutable and immutable “worlds” are kept apart. (Although see
 `Escape hatches`_.)
 
-**Deep** immutability is important to allow safe sharing between sub-interpreters.
+Immutability is important to allow safe sharing between sub-interpreters.
 To illustrate this point, let's assume that it would be possible to
 share a mutable object O across two sub-interpreters (Sub 1 and
 Sub 2) each with their own GIL. Because each sub-interpreter is
 only synchronising with its own GIL, they are not synchronising
-*with each other*.
+*with each other*. Sharing an *immutable* object avoids the need
+for synchronisation (except for reference counts, which we will
+return to later) -- however, if an immutable object has a mutable
+sub object, then sharing the immutable object indirectly also
+shares the mutable sub objets, which leads to the problems above.
+As we cannot prevent the sub object from being accessed, this
+motivates *deep* immutability.
 
 The picture below shows the situation above pictorially – the boxes
 labelled Sub 1 and Sub 2 show the heaps of sub-interpreters 1 and 2.
 Objects A and D are mutable and reside in the heap of Sub 1. Object B is
 mutable and resides in the heap of Sub 2. A and B both point to a
-immutable shared object C that illegally references the mutable object D.
-Note that object C does not belong to either sub-interpreter, which
-is why it is drawn outside of their heaps.
+immutable shared object C that (illegally in this PEP) references the
+mutable object D. Note that object C does not belong to either
+sub-interpreter, which is why it is drawn outside of their heaps.
 
 .. figure:: pep-0795/diagram_1.svg
 
@@ -195,6 +201,7 @@ Immutable objects avoid these problems: their reference count is managed
 though atomic increments and decrements, and since its fields are immutable,
 they are not subject to data races.
 
+
 Specification
 #############
 
@@ -221,7 +228,7 @@ to immutability. In summary:
    and their instances. Objects of these types will be freezable,
    meaning they will be mutable at creation but may be made immutable.
    Classes are freezable as well. This permits monkey-patching, i.e.
-   adding and removing methods in a class before freezing which is
+   adding and removing methods in a class before freezing it, which is
    important for many libraries, e.g. dataclasses.
 
 .. _de-facto immutable: https://docs.python.org/3/glossary.html#term-immutable
@@ -251,7 +258,7 @@ immutability in Python. All types that are immutable in Python 3.14 are
 also deeply immutable in the sense of this PEP. Further, all instances
 of ``int``, ``float``, ``str``, ``complex``, and ``bool`` and the
 ``None`` constant are deeply immutable. Instances of
-**shallowly immutable** composite objects like ``tuple``,
+**shallowly immutable** composite types like ``tuple``,
 ``namedtuple``, ``frozenset``, ``range`` and ``slice``
 are deeply immutable if their nested objects are deeply
 immutable.
@@ -260,7 +267,8 @@ So far, immutability is always established at the point of
 creation, which means that there is no need for an operation that takes
 a mutable object and makes it immutable (this becomes necessary when
 dealing with user-defined types later). The function ``is_frozen()``
-can be used to test if an object is deeply immutable.
+can be used to test if an object is deeply immutable, e.g. before
+sharing it with another sub-interpreter.
 
 
 .. code-block:: python
@@ -269,7 +277,7 @@ can be used to test if an object is deeply immutable.
    # is_frozen(obj) returns True if obj is deeply immutable
    from immutable import is_frozen
 
-   # Creates immutable object --  all sub-objects are immutable
+   # Creates immutable object -- all sub-objects are immutable
    p = ("this", 15, "an", "ex parrot")
    is_frozen(p) # True
 
@@ -285,7 +293,7 @@ can be used to test if an object is deeply immutable.
    is_frozen(monty) # returns True -- all sub-objects are immutable
 
 For clarity, while all of the objects above except for the dictionary
-are de-facto immutable today in Python, these cannot be safely shared
+are de-facto immutable today in Python, they cannot be safely shared
 across sub-interpreters without the changes proposed by this PEP. The
 ``n`` tuple contains a mutable dictionary and is, therefore, **not**
 deeply immutable and therefore not safe to share between sub-interpreters.
@@ -337,10 +345,12 @@ detector either.
 Adding support for turning mutable objects of user-defined
 types immutable permits creation of immutable cycles. For these
 we introduce a :ref:`different technique to handle cycles <scc>`
-later in this PEP.
+later in this PEP. Thus, the parallel garbage collection ability
+of Python's sub-intepreters model is kept intact by this PEP.
 
-Register immutable types through C: ``register_shallow_immutable(typ)``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Register immutable types through C
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The function ``register_shallow_immutable(typ)`` allows modules
 that have immutable types implemented through C to register them
@@ -348,18 +358,19 @@ as such, so that they can be shared across sub-interpreters. A
 type may be registered as shallow immutable if it does not contain
 any mutable fields. An ``is_frozen`` check on a type which has
 been registered as shallow immutable will return ``True`` if all
-fields are deeply immutable or fail otherwise. This check is done
-on a call to ``is_frozen`` on an object, this means that
+fields reference deeply immutable objects, else ``False``. This check
+is done on a call to ``is_frozen`` on an object. This means that
 there is no checking cost until immutability is actually used.
 
 Note that checking whether a C type's fields are mutable or not is
-beyond the possibilities of this function. It simply accepts this
-assertion from the programmer. If a type was incorrectly
-registered as shallow immutable, it can lead to undefined
-behaviour, including crashes and memory corruption, when using the
-type across sub-interpreters. This function also requires that
+beyond the possibilities of ``register_shallow_immutable(typ)``. The
+function simply accepts this assertion from the programmer. If a type
+was incorrectly registered as shallow immutable, it can lead to
+undefined behaviour, including crashes and memory corruption, when
+using the type across sub-interpreters. This function also requires that
 the module itself is freezable (See: `freezable`_), since all
 C-types have a reference to the module that defined them.
+
 
 Traversing objects
 ~~~~~~~~~~~~~~~~~~
@@ -400,11 +411,25 @@ Now the notion of *freezable* becomes important:
 
   A freezable object is mutable but can be made immutable.
 
-By default types are freezable but must be frozen *explicitly*,
-as illustrated by Listing 2.
+A freezable object is made immutable through an explicit call to
+the function ``freeze()``. A call to ``freeze(o)`` will make the
+object referenced by ``o`` immutable, along with all other objects
+reachable from fields in ``o`` (and so on) -- including types which
+are reachable from the ``__class__`` field. We refer to this as
+*freeze propagation*. To make an object immutable at construction
+time, simply wrap its construction inside a freeze call. The freeze
+function takes a variable number of arguments which allows it to
+freeze many things at once.
+
+Types are freezable by default but must be frozen *explicitly*,
+as illustrated by Listing 2. This means that the object must be
+frozen by directly passing its reference to freeze (e.g. ``freeze(o)``
+freezes ``o`` explicitly and ``o.__class__`` by freeze propagation;
+whereas ``freeze(o, o.__class__)`` freezes both ``o`` and its class
+explicitly, and at the same time).
 
 .. code-block:: python
-   :caption: **Listing 2:** By default, types must be frozen explicitly.
+   :caption: **Listing 2.a:** By default, types must be frozen explicitly.
 
     class Foo:
         pass
@@ -412,7 +437,7 @@ as illustrated by Listing 2.
     f = Foo()
     f.g = Foo()
     freeze(f) # Will fail because Foo is not immutable
-    freeze(Foo)
+    freeze(Foo) # OK because the type is frozen explicitly -- not by freeze propagation
     freeze(f) # OK because Foo is immutable
     is_frozen(f) # True
     is_frozen(Foo) # True
@@ -420,36 +445,46 @@ as illustrated by Listing 2.
 
 To permit ``freeze(f)`` to propagate to and implicitly freeze the
 ``Foo`` type, we can use the decorator ``@freezable`` on the class
-declaration. Functions and objects are implicitly freezable, but
+declaration. Non type objects are implicitly freezable, but
 note that freezing an object will fail unless its type is
 freezable (or already made immutable). The standard types
-``list``, ``dict``, and ``set`` are now freezable, meaning lists,
+``list``, ``dict``, and ``set`` are also freezable, meaning lists,
 dicts and sets are mutable on creation but can be made immutable
 later.
-
-A freezable object is made immutable through an explicit call to
-the ``freeze()`` function. To make an object immutable at
-construction time, simply wrap its construction inside a freeze
-call.
 
 To make a type immutable immediately at creation time, a decorator
 ``@frozen`` can be used. The decorators, the ``freeze()`` function,
 along with other utilities described later in this document are in
-a module called ``immutable``.
+a module called ``immutable``. The listing below revisits the listing
+above and uses the ``@frozen`` decorator on ``Foo``.
+
+.. code-block:: python
+   :caption: **Listing 2.b:** By default, types must be frozen explicitly.
+
+    from immutable import freeze, is_frozen, frozen
+
+    @frozen
+    class Foo:
+        pass
+
+    is_frozen(Foo) # True
+    f = Foo()
+    f.g = Foo()
+    freeze(f) # OK because Foo is immutable
+    is_frozen(f) # True
+    if_frozen(f.g) # True (by propagation)
 
 An immutable type may not reference mutable state, and
 additionally does not permit adding, removing or changing
-functions. Immutable types may not inherit from mutable types,
-but may have mutable subtypes. The ``object`` class and the
-``type`` meta class are immutable but default as described above.
+functions. Immutable types *may not* inherit from mutable types,
+but *may have* mutable subtypes. The ``object`` class and the
+``type`` meta class are immutable by default as described above.
 
 This PEP includes `escape hatches`_ that relax the restrictions on
-capturing mutable state in functions and types. Note that while we
-did not discuss immutable functions much when we limited ourselves
-to built-in types, they were already there as part of the immutable
-type objects.
+capturing mutable state in functions and types.
 
-With freezable objects, ``freeze()`` and ``@frozen`` come the
+As pointer out above,
+with freezable objects, ``freeze()`` and ``@frozen`` come the
 issue of *freeze propagation*, meaning what freezable objects can
 be made immutable as a side-effect of making something else
 immutable. For example, consider the figure below, ``freeze(x)``
@@ -462,6 +497,14 @@ An attempt at mutating ``C`` through ``y`` will result in
 
    **Figure 4:** A first look at freeze propagation. Freezing ``x`` will affect objects ``A``, ``B`` and ``C``.
 
+Freeze propagation is similar to how static annotations such
+as ``const`` from C or C++ propagate through a code base, except
+at run-time instead of compile-time. This PEP limits or manages freeze
+propagation by making user-defined types explicitly freezable,
+providing a way to hook into the freeze mechanism, and by
+allowing opting out of freezing altogether or for some limited
+duration.
+
 
 Pre-freeze hook
 ~~~~~~~~~~~~~~~
@@ -470,9 +513,12 @@ Sometimes it is necessary to run some code just before an object
 is frozen. This can be done by calling ``set_pre_freeze_hook``
 with a callable that will be invoked just before freezing the
 object. The callable will be passed the object that is about to be
-frozen as its only argument. The callable may call perform
-operations on this object, or its contained objects to
-affect whether freezing will succeed or not.
+frozen as its only argument. The callable may perform
+operations on this object, or its contained objects e.g. to
+affect whether freezing will succeed or not. (It can also take
+some mutable state and wrap it in an escape hatch etc. We use
+this hook mechanism internally to handle functions and modules,
+as will be described later.)
 
 On user defined types, the definition can directly define a
 ``__pre_freeze__`` method that will be called as the pre-freeze
@@ -512,13 +558,17 @@ mutable and immutable arguments. It is free to mutate newly
 created objects or any mutable arguments -- but it may not capture or
 store a reference to mutable state as part of the function object.
 Really, an immutable function is more of a "sharable function".
-Making a function immutable does not prevent optimisations etc.
-which rely on mutating the code object. However, such optimisation
-will need to be carried out in a way that's thread-safe without
+Making a function immutable does not prevent optimisations
+which rely on mutating the code object. However, such optimisations
+will need to be carried out in a way that is thread-safe without
 relying on a single GIL.
 
-The major challenge with immutable declarations can be illustrated
-easily through an example. What if the following program was legal?
+(While we did not discuss immutable functions much when we limited
+ourselves to built-in types, they were already there as part of the
+immutable type objects.)
+
+The major challenge with immutable functions can be illustrated
+through an example. What if the following program was legal?
 
 .. code-block:: python
    :caption: **Listing 3:** The problem with sharing functions across sub-interpreters
@@ -565,8 +615,8 @@ When a function is frozen, we *decouple* it from its defining
 context in two ways. This logic is handled transparently in the
 pre-freeze hook of the function type object:
 
-1. We replace its captured globals with a copy that contains only
-   the values that the function captured. (So ``random`` and ``x``
+1. We re-point its captured globals to point to a copy that contains
+   only the values that the function captured. (So ``random`` and ``x``
    in our example above, but not ``y``.) The copy is shallow.
 2. We freeze the globals copy which freezes the *values* which
    are shared between the globals dictionaries, but keeps the
@@ -576,7 +626,7 @@ pre-freeze hook of the function type object:
    append is permitted.
 
 If a nested function captures values from a stack frame of another
-stack frame, we handle those in the same way: we make a shallow
+function call, we handle those in the same way: we make a shallow
 copy of the cell objects and freeze the copies. In the code below,
 you can witness how freezing the ``foo`` function effectively
 gives ``foo`` its own copy of the ``x`` *variable*, which
@@ -685,8 +735,8 @@ Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj``, not a copy.
 Freezability - Unfreezable and explicitly freezable objects
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The immutable module provides the ``set_freezable(obj, status=Yes)``
-function which will control if and how an object is freezable. Most
+The immutable module provides the function ``set_freezable(obj, status=Yes)``
+which controls if and how an object is freezable. Most
 objects are freezable by default, meaning that freezing can propagate
 to them. However, functions and types are explicitly freezable by
 default (``set_freezable(obj, Explicit)``) meaning that freezing
@@ -694,53 +744,49 @@ will never propagate to them and they can only be frozen when they
 are explicitly passed in to ``freeze()``. Objects can also be marked as
 unfreezable (``set_freezable(obj, No)``) which will result in an error
 when someone attempts to freeze the object. The values for ``Yes``,
-``No`` and ``Explicit`` will be provided from the immutable module.
+``No`` and ``Explicit`` are defined in the immutable module.
 The listing below shows the effects of freezability:
 
 .. code-block:: python
    :caption: **Listing 6:** Examples of freezability
+
    class Cell:
        def __init__(self, value):
            self.value = value
 
-   val = {"1": "One"}
-   c = Cell(val)
+   val1 = {"1": "One"}
+   c = Cell(val1)
 
-   freeze(c) # 💥 Fails since the `Cell` class is explicitly freezable
+   freeze(c) # 💥 Fails since the Cell class must be frozen explicitly
 
    freeze(Cell)
-   freeze(c) # Succeeds since `Cell` was explicitly frozen
-   is_frozen(val) # Val is now frozen as well
+   freeze(c) # Succeeds since Cell was explicitly frozen
+   is_frozen(val1) # Val is now frozen as well
 
-   val = {"2": "Two"}
-   set_freezable(val, Explicit)
-   c = Cell(val)
+   val2 = {"2": "Two"}
+   set_freezable(val2, Explicit)
+   c = Cell(val2)
 
-   freeze(c) # 💥 Fails because c references val which needs explicit freezing
+   freeze(c) # 💥 Fails because c references val2 which needs explicit freezing
 
-   freeze(val) # Works because it's explicitly freezable
-   freeze(c) # Works since the referenced value is already frozen
+   freeze(val2) # Succeeds -- explicitly freezes val2
+   freeze(c) # Works since val2 is already frozen
 
-   val = {"3": "Three"}
-   set_freezable(val, No)
-   c = Cell(val)
+   val3 = {"3": "Three"}
+   set_freezable(val3, No)
+   c = Cell(val3)
 
-   freeze(c) # 💥 Fails because val is not freezable
-   freeze(val) # 💥 Fails because val is not freezable
+   freeze(c) # 💥 Fails because val3 is not freezable
+   freeze(val3) # 💥 Fails because val3 is not freezable
 
-Types are by default explicitly freezable, this also prevents all
-instances of the type from being immutable, until the type has been
-frozen. Functions by default also need to be explicitly frozen, this
-is done to prevent accidentally freezing values captured by functions.
-Some functions will also break, when they're frozen, for example
-functions that modify captured state using the `global` or `nonlocal`
-keywords. Note that freezing a type will propagate to the methods
-without needing to call freeze on each method explicitly.
+By default, types must be frozen explicitly. Notably, this prevents
+instances of the type from becoming immutable too, until the type has been
+frozen.
 
 Modules are unfreezable by default and require the authors to opt-in
 to immutability. Modules are discussed further in :ref:`modules`
 
-The ``immutable`` module will provide decorators to easily change
+The ``immutable`` module provides decorators to easily change
 freezability and act as documentation on the function or type. These
 decorators are:
 
@@ -762,7 +808,7 @@ Here is a sketch of how the decorators may be implemented:
        return obj
 
    def frozen(obj):
-       set_freezable(obj, Yes)
+       set_freezable(obj, Yes) # Explicit would also have worked
        freeze(obj)
        return obj
 
@@ -787,14 +833,13 @@ listing below shows this.
    roll() # OK!
    roll() # OK! (returns different number with high probability)
 
-
-This behaviour is different from a function that captures an
-module object imported in the outer scope. Note that modules
+This behaviour is different from a function that captures a
+module object imported in the outer scope. Recall that modules
 are unfreezable by default. If we allowed freezing to propagate
 to module objects by default, freezing would in many cases
 incapacitate modules captured by the functions.
 
-A author can allow freezing of their module by setting the
+An author can allow freezing of their module by setting its
 freezability during module initialisation using the
 ``set_freezable()`` function. Modules that opt-in to freezing
 can easily be shared across sub-interpreters like other
@@ -802,11 +847,12 @@ immutable objects. `Escape hatches`_ can be used to retain some
 mutable state in an otherwise frozen module.
 
 Some modules may support multiple sub-interpreters but not
-freezing the module state. This PEP introduces the ``Proxy``
-freezability specific to modules which supports these cases,
-by turning the modules into proxy objects that import the
-module on demand very similar to the one behaviour proposed
-by `PEP 810`_ for lazy imports.
+freezing the module state. This PEP introduces an alternative
+to freezing modules which supports these cases by turning the
+modules into proxy objects that import the module on demand
+very similar to the one behaviour proposed by `PEP 810`_ for
+lazy imports. This behaviour is enabled by calling
+``set_freezable(module, Proxy)`` on the module in question.
 
 .. _PEP 810: https://peps.python.org/pep-0810/
 
@@ -835,7 +881,7 @@ the top-level ``random()`` function requires the module state
 to be mutable. Any future calls to random would fail, as the
 internal state can no longer be mutated.
 
-The module could use `escape hatches`_ for its mutable state or
+To get around this, a module can use `escape hatches`_ for its mutable state or
 use the ``Proxy`` mode. This mode allows the module object to be
 frozen but keeps the underlying module state mutable. Any accesses
 to the frozen module object will be delegated to the (mutable)
@@ -846,7 +892,7 @@ mutable module state of the sub-interpreter and import the module
 on demand if this is the first usage of the module on the given
 sub-interpreter.
 
-This proxy mode basically turns the ``roll()`` function from
+Thus, the proxy mode logically turns the ``roll()`` function from
 **Listing 10** into the ``roll()`` function from **Listing 9**
 that moved the import statement into the function. In this way
 it is basically the same as the behaviour from `PEP 810`_ for
@@ -856,7 +902,6 @@ The proxy mode will work by installing a pre-freeze hook on the module
 that turns the module object in to a proxy object before freezing it.
 The proxy object is decoupled from the module, so freezing the proxy
 has no effect on the module.
-
 
 **This is what a module object's pre-freeze hook does on freeze
 to accomplish this:**
@@ -892,14 +937,13 @@ In addition to the immutability support for built-in types:
   reachable from them can be made immutable.
 - Immutable types and function may not capture references to mutable state.
 - Making an object immutable blocks subsequent mutation of the object.
-- Declarations (types and functions) can be made immutable but require an
-  explicit call to ``freeze()`` by default.
+- Types require an explicit call to ``freeze()`` by default to be made immutable.
 - The ``@frozen`` decorator can be used to freeze a function or type directly
   after creation.
-- The ``@freezable`` can be used to allow implicit freezing of types and
-  functions. While the ``@unfreezable`` decorator can be used to prevent
+- The ``@freezable`` decorator can be used to allow implicit freezing of types.
+- The ``@unfreezable`` decorator can be used to prevent
   freezing under all circumstances.
-- An immutable class’s functions are all immutable, and methods cannot
+- An immutable type’s functions are all immutable, and methods cannot
   be added, removed, or changed.
 - Instances of immutable types are mutable at creation but can be
   made immutable (unless they have been made unfreezable).
@@ -907,8 +951,9 @@ In addition to the immutability support for built-in types:
 - Any object can have a pre-freeze hook that can be used to run
   code just before an object is frozen or fail freezing.
 - Modules are unfreezable by default but can opt-in to freezing.
-- Modules have a special proxy freezability which will delegate any
-  accesses to the mutable module on the current sub-interpreter. 
+- Modules support a special proxy mode which will delegate any
+  accesses to the mutable module on the current sub-interpreter.
+
 
 Escape hatches
 ==============
@@ -1132,7 +1177,7 @@ Controlling the propagation of freezing
 A recurring theme when discussing this proposal on DPO has been concerns
 that freezing an object will propagate beyond the programmers intention, and cause
 objects to be made immutable accidentally. Immutability propagation is an inherent effect in
-immutability systems at witnessed by e.g. ``const`` in C and C++.
+immutability systems as witnessed by e.g. ``const`` in C and C++.
 Annotating a variable or function with ``const`` typically propagates in
 the source code, forcing the addition of additional ``const``
 annotations, and potentially changes to the code. In C and C++, this
@@ -1143,7 +1188,7 @@ document.
 Freeze propagation is not possible to escape unless one
 wants to limit immutability to something that happens only
 at creation. This is not compatible with Python patterns like
-monkey patching and cyclic structures.
+monkey patching and cyclic structures. (Or how types are defined.)
 
 By making classes *explicitly freezable* we avoid freezing one
 object propagating to all objects of the same type at the same
@@ -1176,21 +1221,21 @@ functions.
 
 **Propagation rules:**
 
--  There is no such thing as freeze propagation. Objects are immutable from
-   the leaves up, at construction-time. There is no need for the ``freeze()``
-   function for these objects.
+- There is no such thing as freeze propagation. Objects are immutable from
+  the leaves up, at construction-time. There is no need for the ``freeze()``
+  function for these objects.
 
 **Freezing rules:**
 
--  An object which is an instance of a type that is de-facto immutable
-   in Python 3.14 is immutable at creation; unless it references data
-   that are mutable. Notable exception: instances of ``type`` are
-   mutable; only the *type objects* we have explicitly
-   listed are immutable. (Plus types registered as shallow immutable.)
+- An object which is an instance of a type that is de-facto immutable
+  in Python 3.14 is immutable at creation; unless it references data
+  that are mutable. Notable exception: instances of ``type`` are
+  mutable; only the *type objects* we have explicitly
+  listed are immutable. (Plus types registered as shallow immutable.)
 
 **Immutability invariant:**
 
--  An immutable object only references other immutable objects.
+- An immutable object only references other immutable objects.
 
 
 Objects of User-Defined Type
@@ -1269,7 +1314,7 @@ Freezing functions
 A function can become immutable if it satisfies *all* of the constraints below:
 
 - All the constraints on freezing objects above.
-- If the function has default arguments, these will become (and can be) frozen.
+- If the function has default arguments, these can be (and will become) frozen.
 
 For example, each of the following functions can be made immutable by a simple
 call to ``freeze``:
@@ -1337,7 +1382,7 @@ A type can become immutable if it satisfies *all* of the constraints below:
 
 - It is not unfreezable.
 - All its supertypes are immutable or freezable.
-- **FIXME** Its meta class either is or can become immutable. (We will expand on this at a later date.)
+- Its meta class either is or can become immutable. (We will expand on this at a later date -- currently most meta classes cannot be frozen out of the box because of mutable state.)
 - All the reachable objects from the type (function objects, class variables) can be frozen.
 
 Note the absence of a requirement that all functions defined in the
@@ -1414,7 +1459,7 @@ Preventing a freezable instance from becoming immutable
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 To prevent a freezable object from becoming immutable we can set
-``set_freezable(o, No)``. The ``immutable`` module that this PEP
+``set_freezable(obj, No)``. The ``immutable`` module that this PEP
 provides contains a context manager that one can use to manipulate
 this status at the start of a block, and restore it at the end:
 
