@@ -712,17 +712,32 @@ Note that freezing is *in-place*; ``freeze(obj)`` freezes ``obj``, not a copy.
 Freezability - Unfreezable objects and objects which must be explicitly frozen
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The immutable module provides the function ``set_freezable(obj, status=Yes)``
-which controls if and how an object is freezable. Most
-objects are freezable by default, meaning that freezing can propagate
-to them. However, types cannot be frozen through propagation by
-default -- they can only be frozen when they
-are explicitly passed in to ``freeze()`` (``set_freezable(obj, Explicit)``).
-Objects can also be marked as
-unfreezable (``set_freezable(obj, No)``) which will result in an error
-when someone attempts to freeze the object. The values for ``Yes``,
-``No`` and ``Explicit`` are defined in the immutable module.
-The listing below shows the effects of freezability:
+A class can control the freezability of its instances by defining a ``__freezable__``
+attribute. This attribute can be set to ``True`` or ``freezable``(meaning that
+the object can be frozen) ``False`` or ``unfreezable`` (meaning that the object
+cannot be frozen) and finally ``Explicit``, meaning that the object can only be
+frozen if it is explicitly passed to ``freeze()``. ``freezable`` and ``unfreezable``
+are the decorator functions defined in the ``immutable`` module. ``Explicit`` is a
+constant defined in the ``immutable`` module.
+
+In addition, the class can control the freezability of the class itself
+by defining a ``__class_freezable__`` attribute with the same possible values.
+Thus, it is possible to have a class whose instances are explicitly freezable,
+but the class itself is freezable by default, and vice versa.
+
+A module can control its freezability by defining a ``__freezable__`` attribute as well,
+but has the additional option of being a proxy (``Proxy``) which is discussed
+in the next section.
+
+If ``__freezable__`` is not defined, the default freezability is ``True``.
+If ``__class_freezable__`` is not defined, the default freezability is ``Explicit``.
+
+For objects that cannot have ``__freezable__`` or ``__class_freezable__``
+defined on them, such as built-in types, the immutable module provides the functions
+``set_freezable(obj, status=Yes)`` and ``set_class_freezable(cls, status=Yes)``
+to set the freezability of the object or class respectively.
+
+The listing below shows the effects of freezability using the ``set_freezable()`` function.
 
 .. code-block:: python
    :caption: **Listing 6:** Examples of freezability
@@ -790,6 +805,9 @@ Here is a sketch of how the decorators may be implemented:
        return obj
 
 .. _modules:
+
+
+
 
 Frozen functions capturing module state
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1582,6 +1600,19 @@ set by the ``freeze`` function and returns ``True`` if this bit is
 set. If called on a shallow immutable object, and the bit is not
 set, ``is_frozen`` will inspect the sub-objects and return true if
 their ``is_frozen`` check succeeds.
+
+
+The ``is_freezable`` function
+-----------------------------
+
+The ``is_freezable`` function checks the freezability status of an
+object. It returns one of the following values: ``Yes``, ``No``,
+``Explicit``, or ``Proxy``. The first three are used for all objects,
+whereas the last is only used for modules. Note that this check is
+shallow, and does not check whether the object can actually be frozen.
+For example, an for which ``is_freezable`` returns ``Yes`` may still
+fail to freeze if it references an object for which ``is_freezable``
+returns ``No``.
 
 
 The ``set_freezable`` function and the ``Yes``, ``No``, ``Explicit``, and ``Proxy`` constants
