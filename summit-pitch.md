@@ -1,0 +1,49 @@
+# Summit pitch
+
+Questions: who shall be the person that pitches?
+
+## Title
+*The title of your talk/discussion topic. This will appear in the Language Summit schedule on the conference website.*
+
+Fearless Concurrency in Python
+
+
+## Key discussion item
+
+> *What is the "thing" you want to discuss in front of mostly Python core developers? What decision to be made? What are your questions, and proposed solutions? This should fit in 10 minutes, to allow for 20 minutes of discussion. Therefore this should be very focused. This field will only be read by Language Summit co-chairs to determine the talk acceptance. You can include a rough outline, useful links, sample discussions, etc.*
+
+
+We want to discuss a dynamically checked ownership model for Python objects and a "fearless" concurrency model that it enables.
+The ownership model is based on "regions" and "deep immutability" and allows existing Python data structures to be used in multi-threaded programs.
+
+The presentation will be based on collaboration with the Faster CPython team at Microsoft and
+prototyping work done on a fork of the CPython interpreter.
+The initial design is documented in a research paper that is conditionally accepted to appear at the ACM PLDI'25 conference.
+[Note that the paper is not yet public, but will be available by the time of the Language Summit.]
+
+The aim of the presentation is to get feedback on the ideas, and to discuss the implications of the model for Python.
+We also want to discuss with the core developers the possibility of getting this into CPython itself and outline a sequence of PEPs that deliver different parts of the model incrementally.
+We will describe how the model can be implemented in CPython, and what changes would be needed to the language and runtime to support it.
+
+
+## The public pitch
+*This will be shown in the Language Summit schedule on the conference website and published ahead of the event. Write one or two short paragraphs to pitch this topic to the attendees. This is your chance to encourage people to discuss the topic with you!*
+
+Embracing concurrency in Python comes with challenges for Python
+programmers as well as for the maintainers of the language itself.
+The race conditions that are common in concurrent programming are
+hard to debug, and require different tooling than what is commonly
+used in Python, and go against the grain of many optimisations in
+Python's runtime. 
+
+We believe there is an opportunity to build a new concurrency
+model for Python based on "regions" and "deep immutability" that
+protects both Python programs and the Python runtime from many of
+the problems with poorly synchronised programs, while still
+deliver true multi-threaded performance. The goal is to provide a
+model that is easy to use and flexible, so existing Python
+programs can be easily ported to multi-threading. The model allows
+for safe sharing of data between threads (in free-threaded Python)
+and between sub-interpreters.
+
+The presentation is based on the ideas presented in a research paper in the ACM PLDI'25 conference: (link to be once available).
